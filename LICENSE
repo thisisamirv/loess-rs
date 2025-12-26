@@ -1,0 +1,69 @@
+DUAL LICENSE
+
+Copyright (c) 2025 Amir Valizadeh
+
+This software is dual-licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) and a Commercial License.
+
+================================================================================
+OPTION 1: AGPL-3.0 (Open Source)
+================================================================================
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+IMPORTANT AGPL-3.0 REQUIREMENTS:
+
+- If you modify this software and use it to provide a network service, you MUST
+  make the complete source code of your modified version available to users of
+  that service.
+- Any derivative works must also be licensed under AGPL-3.0.
+- You must preserve all copyright and license notices.
+
+Full AGPL-3.0 license text: <https://www.gnu.org/licenses/agpl-3.0.txt>
+
+================================================================================
+OPTION 2: Commercial License
+================================================================================
+
+If you wish to use this software in a proprietary application or service without
+the AGPL-3.0 requirements (such as disclosing your source code), you must obtain
+a commercial license.
+
+A commercial license grants you the right to:
+
+- Use the software in closed-source/proprietary applications
+- Modify the software without releasing your changes
+- Distribute the software as part of your proprietary product
+- Use the software in network services without source disclosure
+
+For commercial licensing inquiries, please contact:
+Email: <thisisamirv@gmail.com>
+Subject: loess-rs Commercial License Inquiry
+
+================================================================================
+CHOOSING A LICENSE
+================================================================================
+
+You may choose either license option:
+
+1. Use under AGPL-3.0 if you are creating open-source software and can comply
+   with the AGPL-3.0 requirements (including source code disclosure for network
+   services).
+
+2. Obtain a commercial license if you need to use this software in proprietary
+   applications or cannot comply with AGPL-3.0 requirements.
+
+Using this software under AGPL-3.0 without complying with its terms, or using
+it commercially without a commercial license, constitutes copyright infringement.
+
+================================================================================
