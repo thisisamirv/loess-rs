@@ -21,6 +21,18 @@ A high-performance implementation of LOESS (Locally Estimated Scatterplot Smooth
 - **Flexibility**: Multiple weight kernels (Tricube, Epanechnikov, etc.) and `no_std` support (requires `alloc`).
 - **Validated**: Numerical agreement with R's `stats::loess` and Python's `statsmodels`.
 
+## LOESS vs. LOWESS
+
+| Feature               | LOESS (This Crate)                | LOWESS                         |
+|-----------------------|-----------------------------------|--------------------------------|
+| **Polynomial Degree** | Linear, Quadratic, Cubic, Quartic | Linear (Degree 1)              |
+| **Dimensions**        | Multivariate (n-D support)        | Univariate (1-D only)          |
+| **Flexibility**       | High (Distance metrics)           | Standard                       |
+| **Complexity**        | Higher (Matrix inversion)         | Lower (Weighted average/slope) |
+
+> [!TIP]
+> For a **LOWESS** implementation which is faster and simpler, use [`lowess`](https://github.com/thisisamirv/lowess).
+
 ## Robustness Advantages
 
 This implementation is **more robust than statsmodels** due to two key design choices:
