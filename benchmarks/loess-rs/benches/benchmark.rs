@@ -207,7 +207,7 @@ fn bench_scalability(c: &mut Criterion) {
     let mut group = c.benchmark_group("scalability");
     group.sample_size(50);
 
-    for size in [1_000, 5_000, 10_000, 50_000] {
+    for size in [1_000, 5_000, 10_000] {
         group.throughput(Throughput::Elements(size as u64));
 
         let (x, y) = generate_sine_data(size, 42);
@@ -280,7 +280,7 @@ fn bench_financial(c: &mut Criterion) {
     let mut group = c.benchmark_group("financial");
     group.sample_size(100);
 
-    for size in [500, 1000, 5000, 10000] {
+    for size in [500, 1000, 5000] {
         let (x, y) = generate_financial_data(size, 42);
 
         group.bench_with_input(BenchmarkId::new("price_smoothing", size), &size, |b, _| {
@@ -303,7 +303,7 @@ fn bench_scientific(c: &mut Criterion) {
     let mut group = c.benchmark_group("scientific");
     group.sample_size(100);
 
-    for size in [500, 1000, 5000, 10000] {
+    for size in [500, 1000, 5000] {
         let (x, y) = generate_scientific_data(size, 42);
 
         group.bench_with_input(BenchmarkId::new("spectroscopy", size), &size, |b, _| {
@@ -326,7 +326,7 @@ fn bench_genomic(c: &mut Criterion) {
     let mut group = c.benchmark_group("genomic");
     group.sample_size(50);
 
-    for size in [1000, 5000, 10000, 50000] {
+    for size in [1000, 5000] {
         let (x, y) = generate_genomic_data(size, 42);
 
         group.bench_with_input(BenchmarkId::new("methylation", size), &size, |b, _| {

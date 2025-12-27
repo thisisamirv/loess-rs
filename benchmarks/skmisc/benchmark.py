@@ -222,7 +222,7 @@ def benchmark_scalability(iterations: int = 10) -> List[BenchmarkResult]:
     print("=" * 80)
     
     results = []
-    sizes = [1000, 5000, 10000, 50000]
+    sizes = [1000, 5000]
     
     for size in sizes:
         x, y = generate_sine_data(size, seed=42)
@@ -300,7 +300,7 @@ def benchmark_financial(iterations: int = 10) -> List[BenchmarkResult]:
     print("=" * 80)
     
     results = []
-    sizes = [500, 1000, 5000, 10000]
+    sizes = [500, 1000, 5000]
     
     for size in sizes:
         x, y = generate_financial_data(size, seed=42)
@@ -323,7 +323,7 @@ def benchmark_scientific(iterations: int = 10) -> List[BenchmarkResult]:
     print("=" * 80)
     
     results = []
-    sizes = [500, 1000, 5000, 10000]
+    sizes = [500, 1000, 5000]
     
     for size in sizes:
         x, y = generate_scientific_data(size, seed=42)
@@ -346,7 +346,7 @@ def benchmark_genomic(iterations: int = 10) -> List[BenchmarkResult]:
     print("=" * 80)
     
     results = []
-    sizes = [1000, 5000, 10000, 50000]
+    sizes = [1000, 5000]
     
     for size in sizes:
         x, y = generate_genomic_data(size, seed=42)
