@@ -17,7 +17,6 @@
 
 use approx::assert_relative_eq;
 
-use loess_rs::internals::algorithms::regression::WeightParams;
 use loess_rs::internals::math::kernel::WeightFunction;
 use loess_rs::internals::math::mad::compute_mad;
 use loess_rs::internals::primitives::window::Window;
@@ -274,17 +273,12 @@ fn test_kernel_support() {
 fn test_window_weights_no_points_in_range() {
     let x = vec![1.0, 2.0, 3.0];
     let weights = &mut [0.0f64; 3];
-    let params = WeightParams::new(5.0, 1.0, false);
-
     let kernel = WeightFunction::Tricube;
     let (sum, rightmost) = kernel.compute_window_weights(
-        &x,
-        0,
-        2,
-        params.x_current,
-        params.window_radius,
-        params.h1,
-        params.h9,
+        &x, 0, 2, 5.0, // x_current
+        1.0, // window_radius
+        0.0, // h1
+        1.0, // h9
         weights,
     );
 
@@ -300,17 +294,12 @@ fn test_window_weights_no_points_in_range() {
 fn test_window_weights_bandwidth_cutoff() {
     let x = vec![0.0, 1.0, 10.0];
     let weights = &mut [0.0f64; 3];
-    let params = WeightParams::new(0.0, 2.0, false);
-
     let kernel = WeightFunction::Tricube;
     let (_sum, rightmost) = kernel.compute_window_weights(
-        &x,
-        0,
-        2,
-        params.x_current,
-        params.window_radius,
-        params.h1,
-        params.h9,
+        &x, 0, 2, 0.0, // x_current
+        2.0, // window_radius
+        0.0, // h1
+        2.0, // h9
         weights,
     );
 
@@ -337,14 +326,6 @@ fn test_window_weights_degenerate_bandwidth() {
     let x = vec![0.0f64, 1.0];
     let window = Window { left: 0, right: 1 };
 
-    // Zero bandwidth (degenerate case)
-    let params = WeightParams {
-        x_current: 0.0f64,
-        window_radius: 0.0f64,
-        h1: 0.0f64,
-        h9: 0.0f64,
-    };
-
     let mut weights = vec![1.0f64; 2];
     let kernel = WeightFunction::Tricube;
 
@@ -352,10 +333,10 @@ fn test_window_weights_degenerate_bandwidth() {
         &x,
         window.left,
         window.right,
-        params.x_current,
-        params.window_radius,
-        params.h1,
-        params.h9,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
         &mut weights,
     );
 
@@ -376,11 +357,6 @@ fn test_window_weights_skip_left_points() {
     let x = vec![-10.0f64, 0.0f64, 1.0f64, 2.0f64];
     let window = Window { left: 0, right: 3 };
 
-    // x_current = 1.0, bandwidth = 1.0
-    let mut params = WeightParams::new(1.0f64, 1.0f64, true);
-    params.h9 = 0.5f64; // lower_bound = 0.5 => skip indices 0 and 1
-    params.h1 = 0.01f64; // Center point gets weight 1
-
     let mut weights = vec![0.0f64; 4];
     let kernel = WeightFunction::Tricube;
 
@@ -388,10 +364,10 @@ fn test_window_weights_skip_left_points() {
         &x,
         window.left,
         window.right,
-        params.x_current,
-        params.window_radius,
-        params.h1,
-        params.h9,
+        1.0,  // x_current
+        1.0,  // window_radius
+        0.01, // h1
+        0.5,  // h9
         &mut weights,
     );
 
@@ -423,18 +399,16 @@ fn test_window_weights_various_kernels() {
     ];
 
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-    let params = WeightParams::new(2.0, 2.0, false);
-
     for kernel in kernels {
         let mut weights = vec![0.0f64; 5];
         let (sum, _rightmost) = kernel.compute_window_weights(
             &x,
             0,
             4,
-            params.x_current,
-            params.window_radius,
-            params.h1,
-            params.h9,
+            0.0, // x_current
+            2.0, // window_radius
+            0.0, // h1
+            2.0, // h9
             &mut weights,
         );
 

@@ -92,6 +92,9 @@
 //! let model = Loess::new()
 //!     .fraction(0.5)                                   // Use 50% of data for each local fit
 //!     .iterations(3)                                   // 3 robustness iterations
+//!     .degree(Linear)                                  // Polynomial degree (Linear default)
+//!     .dimensions(1)                                   // Number of dimensions
+//!     .distance_metric(Euclidean)                      // Distance metric
 //!     .weight_function(Tricube)                        // Kernel function
 //!     .robustness_method(Bisquare)                     // Outlier handling
 //!     .delta(0.01)                                     // Interpolation optimization
@@ -102,6 +105,7 @@
 //!     .return_diagnostics()                            // Fit quality metrics
 //!     .return_residuals()                              // Include residuals
 //!     .return_robustness_weights()                     // Include robustness weights
+//!     .return_se()                                     // Enable standard error computation
 //!     .cross_validate(KFold(5, &[0.3, 0.7]).seed(123)) // K-fold CV with 5 folds and 2 fraction options
 //!     .adapter(Batch)                                  // Batch adapter
 //!     .build()?;
@@ -235,28 +239,32 @@
 //!
 //! All builder parameters have sensible defaults. You only need to specify what you want to change.
 //!
-//! | Parameter                                  | Default                                       | Range/Options        | Description                                      | Adapter          |
-//! |--------------------------------------------|-----------------------------------------------|----------------------|--------------------------------------------------|------------------|
-//! | **fraction**                               | 0.67 (or CV-selected)                         | (0, 1]               | Smoothing span (fraction of data used per fit)   | All              |
-//! | **iterations**                             | 3                                             | [0, 1000]            | Number of robustness iterations                  | All              |
-//! | **delta**                                  | 1% of x-range (Batch), 0.0 (Streaming/Online) | [0, ∞)               | Interpolation optimization threshold             | All              |
-//! | **weight_function**                        | `Tricube`                                     | 7 kernel options     | Distance weighting kernel                        | All              |
-//! | **robustness_method**                      | `Bisquare`                                    | 3 methods            | Outlier downweighting method                     | All              |
-//! | **zero_weight_fallback**                   | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
-//! | **return_residuals**                       | false                                         | true/false           | Include residuals in output                      | All              |
-//! | **boundary_policy**                        | `Extend`                                      | 3 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
-//! | **auto_convergence**                       | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
-//! | **return_robustness_weights**              | false                                         | true/false           | Include final weights in output                  | All              |
-//! | **return_diagnostics**                     | false                                         | true/false           | Include RMSE, MAE, R^2, etc. in output           | Batch, Streaming |
-//! | **confidence_intervals**                   | None                                          | 0..1 (level)         | Uncertainty in mean curve                        | Batch            |
-//! | **prediction_intervals**                   | None                                          | 0..1 (level)         | Uncertainty for new observations                 | Batch            |
-//! | **cross_validate**                         | None                                          | Method (fractions)   | Automated bandwidth selection                    | Batch            |
-//! | **chunk_size**                             | 5000                                          | [10, ∞)              | Points per chunk for streaming                   | Streaming        |
-//! | **overlap**                                | 500                                           | [0, chunk_size)      | Overlapping points between chunks                | Streaming        |
-//! | **merge_strategy**                         | `Average`                                     | 4 strategies         | How to merge overlapping regions                 | Streaming        |
-//! | **update_mode**                            | `Incremental`                                 | 2 modes              | Online update strategy (Incremental vs Full)     | Online           |
-//! | **window_capacity**                        | 1000                                          | [3, ∞)               | Maximum points in sliding window                 | Online           |
-//! | **min_points**                             | 3                                             | [2, window_capacity] | Minimum points before smoothing starts           | Online           |
+//! | Parameter                     | Default                                       | Range/Options        | Description                                      | Adapter          |
+//! |-------------------------------|-----------------------------------------------|----------------------|--------------------------------------------------|------------------|
+//! | **fraction**                  | 0.67 (or CV-selected)                         | (0, 1]               | Smoothing span (fraction of data used per fit)   | All              |
+//! | **iterations**                | 3                                             | [0, 1000]            | Number of robustness iterations                  | All              |
+//! | **delta**                     | 1% of x-range (Batch), 0.0 (Streaming/Online) | [0, ∞)               | Interpolation optimization threshold             | All              |
+//! | **weight_function**           | `Tricube`                                     | 7 kernel options     | Distance weighting kernel                        | All              |
+//! | **robustness_method**         | `Bisquare`                                    | 3 methods            | Outlier downweighting method                     | All              |
+//! | **zero_weight_fallback**      | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
+//! | **return_residuals**          | false                                         | true/false           | Include residuals in output                      | All              |
+//! | **boundary_policy**           | `Extend`                                      | 3 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
+//! | **auto_convergence**          | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
+//! | **return_robustness_weights** | false                                         | true/false           | Include final weights in output                  | All              |
+//! | **degree**                    | `Linear`                                      | 0, 1, 2              | Polynomial degree (constant, linear, quadratic)  | All              |
+//! | **dimensions**                | 1                                             | [1, ∞)               | Number of predictor dimensions                   | All              |
+//! | **distance_metric**           | `Euclidean`                                   | 2 metrics            | Distance metric for nD data                      | All              |
+//! | **return_diagnostics**        | false                                         | true/false           | Include RMSE, MAE, R^2, etc. in output           | Batch, Streaming |
+//! | **return_se**                 | false                                         | true/false           | Enable standard error computation                | Batch            |
+//! | **confidence_intervals**      | None                                          | 0..1 (level)         | Uncertainty in mean curve                        | Batch            |
+//! | **prediction_intervals**      | None                                          | 0..1 (level)         | Uncertainty for new observations                 | Batch            |
+//! | **cross_validate**            | None                                          | Method (fractions)   | Automated bandwidth selection                    | Batch            |
+//! | **chunk_size**                | 5000                                          | [10, ∞)              | Points per chunk for streaming                   | Streaming        |
+//! | **overlap**                   | 500                                           | [0, chunk_size)      | Overlapping points between chunks                | Streaming        |
+//! | **merge_strategy**            | `Average`                                     | 4 strategies         | How to merge overlapping regions                 | Streaming        |
+//! | **update_mode**               | `Incremental`                                 | 2 modes              | Online update strategy (Incremental vs Full)     | Online           |
+//! | **window_capacity**           | 1000                                          | [3, ∞)               | Maximum points in sliding window                 | Online           |
+//! | **min_points**                | 3                                             | [2, window_capacity] | Minimum points before smoothing starts           | Online           |
 //!
 //! ### Parameter Options Reference
 //!
@@ -269,6 +277,8 @@
 //! | **zero_weight_fallback** | `UseLocalMean`, `ReturnOriginal`, `ReturnNone`                                     |
 //! | **boundary_policy**      | `Extend`, `Reflect`, `Zero`                                                        |
 //! | **update_mode**          | `Incremental`, `Full`                                                              |
+//! | **degree**               | `Constant`, `Linear`, `Quadratic`, `Cubic`, `Quartic`                              |
+//! | **distance_metric**      | `Euclidean`, `Normalized`, `Chebyshev`, `Manhattan`, `Minkowski`, `Weighted`       |
 //!
 //! See the detailed sections below for guidance on choosing between these options.
 //!
@@ -324,11 +334,11 @@
 //!
 //! Choose the right execution mode based on your use case:
 //!
-//! | Adapter                                      | Use Case                                                                    | Features                                                                         | Limitations                                                               |
-//! |----------------------------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------|
-//! | `Batch`                                      | Complete datasets in memory<br>Standard analysis<br>Full diagnostics needed | All features supported                                                           | Requires entire dataset in memory<br>Not suitable for very large datasets |
-//! | `Streaming`                                  | Large datasets (>100K points)<br>Limited memory<br>Batch pipelines          | Chunked processing<br>Configurable overlap<br>Robustness iterations<br>Residuals | No intervals<br>No cross-validation<br>No diagnostics                     |
-//! | `Online`                                     | Real-time data<br>Sensor streams<br>Embedded systems                        | Incremental updates<br>Sliding window<br>Memory-bounded                          | No intervals<br>No cross-validation<br>Limited history                    |
+//! | Adapter     | Use Case                                                                    | Features                                                                         | Limitations                                                               |
+//! |-------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------|
+//! | `Batch`     | Complete datasets in memory<br>Standard analysis<br>Full diagnostics needed | All features supported                                                           | Requires entire dataset in memory<br>Not suitable for very large datasets |
+//! | `Streaming` | Large datasets (>100K points)<br>Limited memory<br>Batch pipelines          | Chunked processing<br>Configurable overlap<br>Robustness iterations<br>Residuals | No intervals<br>No cross-validation<br>No diagnostics                     |
+//! | `Online`    | Real-time data<br>Sensor streams<br>Embedded systems                        | Incremental updates<br>Sliding window<br>Memory-bounded                          | No intervals<br>No cross-validation<br>Limited history                    |
 //!
 //! **Recommendation:**
 //! - **Start with Batch** for most use cases - it's the most feature-complete
@@ -451,7 +461,7 @@
 //! for i in 1..=10 {
 //!     let x = i as f64;
 //!     let y = 2.0 * x + 1.0;
-//!     if let Some(result) = online_model.add_point(x, y)? {
+//!     if let Some(result) = online_model.add_point(&[x], y)? {
 //!         println!("Latest smoothed value: {:.2}", result.smoothed);
 //!     }
 //! }
@@ -812,6 +822,87 @@
 //! # Result::<(), LoessError>::Ok(())
 //! ```
 //!
+//! ### Polynomial Degree
+//!
+//! Set the degree of the local polynomial fit (default: Linear).
+//!
+//! - **`Constant`** (0): Local weighted mean. Fastest, stable, but high bias.
+//! - **`Linear`** (1): Local linear regression. Standard choice, good bias-variance balance.
+//! - **`Quadratic`** (2): Local quadratic regression. Better for peaks/valleys, but higher variance.
+//! - **`Cubic`** (3): Local cubic regression. Better for peaks/valleys, but higher variance.
+//! - **`Quartic`** (4): Local quartic regression. Better for peaks/valleys, but higher variance.
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//! # let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+//! # let y = vec![2.0, 4.1, 5.9, 8.2, 9.8];
+//!
+//! let model = Loess::new()
+//!     .degree(Quadratic)  // Fit local parabolas
+//!     .fraction(0.5)
+//!     .adapter(Batch)
+//!     .build()?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
+//! ### Dimensions
+//!
+//! Specify the number of predictor dimensions for multivariate smoothing (default: 1).
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//!
+//! // 2D input data (flattened: [x1_0, x2_0, x1_1, x2_1, ...])
+//! let x_2d = vec![1.0, 1.0, 2.0, 1.0, 1.0, 2.0, 2.0, 2.0];
+//! let y = vec![2.0, 3.0, 4.0, 5.0];
+//!
+//! let model = Loess::new()
+//!     .dimensions(2)  // 2 predictor variables
+//!     .adapter(Batch)
+//!     .build()?;
+//!
+//! let result = model.fit(&x_2d, &y)?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
+//! ### Distance Metric
+//!
+//! Choose the distance metric for nD neighborhood computation.
+//!
+//! - **`Euclidean`**:
+//!    - Standard Euclidean distance.
+//!    - When predictors are on comparable scales.
+//! - **`Normalized`**:
+//!    - Standardizes variables (divides by MAD/range).
+//!    - When predictors have different ranges (recommended default).
+//! - **`Manhattan`**:
+//!    - L1 norm (sum of absolute differences).
+//!    - Robust to outliers.
+//! - **`Chebyshev`**:
+//!    - L∞ norm (max absolute difference).
+//!    - Useful for finding the "farthest" point.
+//! - **`Minkowski(p)`**:
+//!    - Lp norm.
+//!    - Generalized p-norm (p >= 1).
+//! - **`Weighted(w)`**:
+//!    - Weighted Euclidean distance.
+//!    - Useful when features have different importance.
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//! # let x_2d = vec![1.0, 1.0, 2.0, 1.0, 1.0, 2.0, 2.0, 2.0];
+//! # let y = vec![2.0, 3.0, 4.0, 5.0];
+//!
+//! let model = Loess::new()
+//!     .dimensions(2)
+//!     .distance_metric(Manhattan)
+//!     .adapter(Batch)
+//!     .build()?;
+//!
+//! let result = model.fit(&x_2d, &y)?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
 //! ### Diagnostics (Batch and Streaming)
 //!
 //! Compute diagnostic statistics to assess fit quality.
@@ -1119,7 +1210,7 @@
 //! for i in 0..1000 {
 //!     let x = i as f64;
 //!     let y = 2.0 * x + 1.0;
-//!     if let Some(output) = processor.add_point(x, y)? {
+//!     if let Some(output) = processor.add_point(&[x], y)? {
 //!         println!("Smoothed: {}", output.smoothed);
 //!     }
 //! }
@@ -1212,7 +1303,7 @@
 //! ## References
 //!
 //! - Cleveland, W. S. (1979). "Robust Locally Weighted Regression and Smoothing Scatterplots"
-//! - Cleveland, W. S. (1981). "LOESS: A Program for Smoothing Scatterplots by Robust Locally Weighted Regression"
+//! - Cleveland, W. S. & Devlin, S. J. (1988). "Locally Weighted Regression: An Approach to Regression Analysis by Local Fitting"
 //!
 //! ## License
 //!
@@ -1232,18 +1323,18 @@ extern crate alloc;
 // Layer 1: Primitives - data structures and basic utilities.
 //
 // Contains fundamental data structures (`Window`, `errors`), and
-// low-level utilities for sorting, partitioning, and windowing.
+// low-level utilities for sorting and windowing.
 mod primitives;
 
 // Layer 2: Math - pure mathematical functions.
 //
-// Contains kernel functions for distance-based weighting and
-// robust statistics (MAD). These are reusable mathematical building blocks.
+// Contains kernel functions for distance-based weighting,
+// distance metrics, boundary handling, and robust statistics (MAD).
 mod math;
 
 // Layer 3: Algorithms - core LOESS algorithms.
 //
-// Contains the implementations of local regression (`LinearRegression`),
+// Contains the implementations of local regression (via `RegressionContext`),
 // robustness weighting (`Bisquare`, `Huber`, `Talwar`), and
 // interpolation/delta optimization.
 mod algorithms;
@@ -1289,25 +1380,16 @@ pub mod prelude {
         BoundaryPolicy::Extend,
         BoundaryPolicy::Reflect,
         BoundaryPolicy::Zero,
+        DistanceMetric::{Chebyshev, Euclidean, Manhattan, Minkowski, Normalized, Weighted},
         KFold, LOOCV, LoessBuilder as Loess, LoessError, LoessResult,
         MergeStrategy::Average,
         MergeStrategy::TakeFirst,
         MergeStrategy::WeightedAverage,
-        RobustnessMethod::Bisquare,
-        RobustnessMethod::Huber,
-        RobustnessMethod::Talwar,
-        UpdateMode::Full,
-        UpdateMode::Incremental,
-        WeightFunction::Biweight,
-        WeightFunction::Cosine,
-        WeightFunction::Epanechnikov,
-        WeightFunction::Gaussian,
-        WeightFunction::Triangle,
-        WeightFunction::Tricube,
-        WeightFunction::Uniform,
-        ZeroWeightFallback::ReturnNone,
-        ZeroWeightFallback::ReturnOriginal,
-        ZeroWeightFallback::UseLocalMean,
+        PolynomialDegree::{Constant, Cubic, Linear, Quadratic, Quartic},
+        RobustnessMethod::{Bisquare, Huber, Talwar},
+        UpdateMode::{Full, Incremental},
+        WeightFunction::{Biweight, Cosine, Epanechnikov, Gaussian, Triangle, Tricube, Uniform},
+        ZeroWeightFallback::{ReturnNone, ReturnOriginal, UseLocalMean},
     };
 }
 

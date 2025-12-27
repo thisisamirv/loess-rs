@@ -13,6 +13,8 @@ A high-performance implementation of LOESS (Locally Estimated Scatterplot Smooth
 ## Features
 
 - **Robust Statistics**: IRLS with Bisquare, Huber, or Talwar weighting for outlier handling.
+- **Multidimensional Smoothing**: Support for n-D data with customizable distance metrics (Euclidean, Manhattan, etc.).
+- **Flexible Fitting**: Linear, Quadratic, Cubic, and Quartic local polynomials.
 - **Uncertainty Quantification**: Point-wise standard errors, confidence intervals, and prediction intervals.
 - **Optimized Performance**: Delta optimization for skipping dense regions and streaming/online modes for large or real-time datasets.
 - **Parameter Selection**: Built-in cross-validation for automatic smoothing fraction selection.
@@ -145,6 +147,15 @@ use loess::prelude::*;
 Loess::new()
     // Smoothing span (0, 1]
     .fraction(0.5)
+
+    // Polynomial degree (Constant, Linear, Quadratic, Cubic, Quartic)
+    .degree(Linear)
+
+    // Number of dimensions
+    .dimensions(1)
+
+    // Distance metric (Euclidean, Manhattan, etc.)
+    .distance_metric(Euclidean)
 
     // Robustness iterations
     .iterations(3)
@@ -301,6 +312,20 @@ for (x, y) in data_stream {
 - **Gaussian**: Very smooth, no compact support
 - **Uniform**: Fastest, least smooth (moving average)
 
+### Polynomial Degree
+
+- **Constant**: Moving weighted average (smoothing only)
+- **Linear** (default): Standard LOESS, good for most trends
+- **Quadratic**: Captures peaks and valleys better
+- **Cubic/Quartic**: Specialized high-order fitting
+
+### Distance Metric
+
+- **Euclidean** (default): Standard L2 distance
+- **Manhattan**: L1 distance, robust to outliers in X
+- **Chebyshev**: L-infinity (max component)
+- **Normalized**: Standardized Euclidean (useful for mixed scales)
+
 ### Delta Optimization
 
 - **None**: Small datasets (n < 1000)
@@ -347,5 +372,5 @@ Contact `<thisisamirv@gmail.com>` for commercial inquiries.
 
 ## References
 
-- Cleveland, W.S. (1979). "Robust Locally Weighted Regression and Smoothing Scatterplots". *JASA*.
-- Cleveland, W.S. (1981). "LOWESS: A Program for Smoothing Scatterplots". *The American Statistician*.
+- Cleveland, W.S. (1979). "Robust Locally Weighted Regression and Smoothing Scatterplots". *Journal of the American Statistical Association*.
+- Cleveland, W.S. & Devlin, S.J. (1988). "Locally Weighted Regression: An Approach to Regression Analysis by Local Fitting". *Journal of the American Statistical Association*.

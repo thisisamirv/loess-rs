@@ -39,12 +39,14 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 // External dependencies
-use core::cmp::Ordering;
-use core::fmt::{Display, Formatter, Result};
+use core::cmp::Ordering::Equal;
+use core::fmt::{Debug, Display, Formatter, Result};
 use num_traits::Float;
 
 // Internal dependencies
+use crate::algorithms::regression::PolynomialDegree;
 use crate::evaluation::diagnostics::Diagnostics;
+use crate::math::distance::DistanceMetric;
 
 // ============================================================================
 // Result Structure
@@ -53,8 +55,17 @@ use crate::evaluation::diagnostics::Diagnostics;
 /// Comprehensive LOESS output containing smoothed values and diagnostics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoessResult<T> {
-    /// Sorted x-values (independent variable).
+    /// Sorted x-values (independent variable). Flattened for nD.
     pub x: Vec<T>,
+
+    /// Number of predictor dimensions.
+    pub dimensions: usize,
+
+    /// Distance metric used for neighborhood search.
+    pub distance_metric: DistanceMetric<T>,
+
+    /// Degree of local polynomial (0 for local mean, 1 for local linear, 2 for local quadratic).
+    pub polynomial_degree: PolynomialDegree,
 
     /// Smoothed y-values (dependent variable).
     pub y: Vec<T>,
@@ -119,7 +130,7 @@ impl<T: Float> LoessResult<T> {
             scores
                 .iter()
                 .copied()
-                .min_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(Equal))
         })
     }
 }
@@ -128,11 +139,15 @@ impl<T: Float> LoessResult<T> {
 // Display Implementation
 // ============================================================================
 
-impl<T: Float + Display> Display for LoessResult<T> {
+impl<T: Float + Display + Debug> Display for LoessResult<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         writeln!(f, "Summary:")?;
-        writeln!(f, "  Data points: {}", self.x.len())?;
-        writeln!(f, "  Fraction: {}", self.fraction_used)?;
+        let n = self.y.len();
+        writeln!(f, "  Data points: {}", n)?;
+        writeln!(f, "  Dimensions:  {}", self.dimensions)?;
+        writeln!(f, "  Distance:    {:?}", self.distance_metric)?;
+        writeln!(f, "  Degree:      {:?}", self.polynomial_degree)?;
+        writeln!(f, "  Fraction:    {}", self.fraction_used)?;
 
         if let Some(iters) = self.iterations_used {
             writeln!(f, "  Iterations: {}", iters)?;
@@ -164,7 +179,11 @@ impl<T: Float + Display> Display for LoessResult<T> {
         let has_weights = self.robustness_weights.is_some();
 
         // Build header
-        write!(f, "{:>8} {:>12}", "X", "Y_smooth")?;
+        if self.dimensions == 1 {
+            write!(f, "{:>8} {:>12}", "X", "Y_smooth")?;
+        } else {
+            write!(f, "{:>8} {:>12}", "X (nD)", "Y_smooth")?;
+        }
         if has_std_err {
             write!(f, " {:>12}", "Std_Err")?;
         }
@@ -208,7 +227,11 @@ impl<T: Float + Display> Display for LoessResult<T> {
             }
             prev_idx = idx;
 
-            write!(f, "{:>8.2} {:>12.6}", self.x[idx], self.y[idx])?;
+            if self.dimensions == 1 {
+                write!(f, "{:>8.2} {:>12.6}", self.x[idx], self.y[idx])?;
+            } else {
+                write!(f, "{:>8.2} {:>12.6}", "[...]", self.y[idx])?;
+            }
 
             // Standard error
             if has_std_err {

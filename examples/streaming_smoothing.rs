@@ -553,7 +553,7 @@ fn example_7_benchmark() -> Result<(), LoessError> {
     println!("{}", "-".repeat(80));
 
     // Generate a larger synthetic dataset
-    let n = 10_000;
+    let n = 1_000;
     println!("Processing {} data points in streaming mode...", n);
 
     let start = std::time::Instant::now();
@@ -562,12 +562,12 @@ fn example_7_benchmark() -> Result<(), LoessError> {
         .fraction(0.5)
         .iterations(3)
         .adapter(Streaming)
-        .chunk_size(1000) // Process 1000 points per chunk
-        .overlap(100) // 100 points overlap
+        .chunk_size(100) // Process 100 points per chunk
+        .overlap(10) // 10 points overlap
         .build()?;
 
-    let chunk_size = 1000;
-    let overlap = 100;
+    let chunk_size = 100;
+    let overlap = 10;
     let mut total_processed = 0;
 
     // Process in chunks

@@ -44,21 +44,40 @@ use std::vec::Vec;
 
 // External dependencies
 use core::fmt::Debug;
+use core::mem;
 use num_traits::Float;
 
 // Internal dependencies
-use crate::algorithms::regression::ZeroWeightFallback;
+use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn};
 use crate::engine::executor::{LoessConfig, LoessExecutor};
 use crate::engine::output::LoessResult;
 use crate::engine::validator::Validator;
 use crate::evaluation::diagnostics::DiagnosticsState;
+use crate::math::boundary::BoundaryPolicy;
+use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
 use crate::primitives::backend::Backend;
 use crate::primitives::errors::LoessError;
-use crate::primitives::partition::{BoundaryPolicy, MergeStrategy};
-use crate::primitives::sorting::sort_by_x;
+
+/// Strategy for merging overlapping regions between streaming chunks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeStrategy {
+    /// Arithmetic mean of overlapping smoothed values: `(v1 + v2) / 2`.
+    Average,
+
+    /// Distance-based weights that favor values from the center of each chunk:
+    /// v1 * (1 - alpha) + v2 * alpha where `alpha` is the relative position within the overlap.
+    #[default]
+    WeightedAverage,
+
+    /// Use the value from the first chunk in processing order.
+    TakeFirst,
+
+    /// Use the value from the last chunk in processing order.
+    TakeLast,
+}
 
 // ============================================================================
 // Streaming LOESS Builder
@@ -111,6 +130,15 @@ pub struct StreamingLoessBuilder<T: Float> {
 
     /// Deferred error from adapter conversion
     pub deferred_error: Option<LoessError>,
+
+    /// Polynomial degree for local regression
+    pub polynomial_degree: PolynomialDegree,
+
+    /// Number of predictor dimensions (default: 1).
+    pub dimensions: usize,
+
+    /// Distance metric for nD neighborhood computation.
+    pub distance_metric: DistanceMetric<T>,
 
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
@@ -169,6 +197,9 @@ impl<T: Float> StreamingLoessBuilder<T> {
             return_robustness_weights: false,
             auto_convergence: None,
             deferred_error: None,
+            polynomial_degree: PolynomialDegree::default(),
+            dimensions: 1,
+            distance_metric: DistanceMetric::default(),
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -372,22 +403,18 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
     /// Process a chunk of data.
     pub fn process_chunk(&mut self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
         // Validate inputs using standard validator
-        Validator::validate_inputs(x, y)?;
+        Validator::validate_inputs(x, y, self.config.dimensions)?;
 
-        // Sort chunk by x
-        let sorted = sort_by_x(x, y);
-
-        // Configure LOESS for this chunk
         // Combine with overlap from previous chunk
         let prev_overlap_len = self.overlap_buffer_smoothed.len();
         let (combined_x, combined_y) = if self.overlap_buffer_x.is_empty() {
-            // No overlap: move sorted data directly (no clone needed)
-            (sorted.x, sorted.y)
+            // No overlap: copy data directly
+            (x.to_vec(), y.to_vec())
         } else {
-            let mut cx = core::mem::take(&mut self.overlap_buffer_x);
-            cx.extend_from_slice(&sorted.x);
-            let mut cy = core::mem::take(&mut self.overlap_buffer_y);
-            cy.extend_from_slice(&sorted.y);
+            let mut cx = mem::take(&mut self.overlap_buffer_x);
+            cx.extend_from_slice(x);
+            let mut cy = mem::take(&mut self.overlap_buffer_y);
+            cy.extend_from_slice(y);
             (cx, cy)
         };
 
@@ -401,6 +428,9 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
             zero_weight_fallback: zero_flag,
             robustness_method: self.config.robustness_method,
             boundary_policy: self.config.boundary_policy,
+            polynomial_degree: self.config.polynomial_degree,
+            dimensions: self.config.dimensions,
+            distance_metric: self.config.distance_metric.clone(),
             cv_fractions: None,
             cv_kind: None,
             auto_convergence: self.config.auto_convergence,
@@ -421,15 +451,16 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
         let smoothed = result.smoothed;
 
         // Determine how much to return vs buffer
-        let combined_len = combined_x.len();
-        let overlap_start = combined_len.saturating_sub(self.config.overlap);
+        let combined_points = combined_y.len();
+        let overlap_start = combined_points.saturating_sub(self.config.overlap);
         let return_start = prev_overlap_len;
+        let dimensions = self.config.dimensions;
 
         // Build output: merged overlap (if any) + new data
         let mut y_smooth_out = Vec::new();
         if prev_overlap_len > 0 {
             // Merge the overlap region
-            let prev_smooth = core::mem::take(&mut self.overlap_buffer_smoothed);
+            let prev_smooth = mem::take(&mut self.overlap_buffer_smoothed);
             for (i, (&prev_val, &curr_val)) in prev_smooth
                 .iter()
                 .zip(smoothed.iter())
@@ -458,7 +489,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
 
         if let Some(ref mut rw_out) = rob_weights_out {
             if prev_overlap_len > 0 {
-                let prev_rw = core::mem::take(&mut self.overlap_buffer_robustness_weights);
+                let prev_rw = mem::take(&mut self.overlap_buffer_robustness_weights);
                 for (i, (&prev_val, &curr_val)) in prev_rw
                     .iter()
                     .zip(result.robustness_weights.iter())
@@ -502,8 +533,9 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
         };
 
         // Buffer overlap for next chunk
-        if overlap_start < combined_len {
-            self.overlap_buffer_x = combined_x[overlap_start..].to_vec();
+        if overlap_start < combined_points {
+            let overlap_start_x = overlap_start * dimensions;
+            self.overlap_buffer_x = combined_x[overlap_start_x..].to_vec();
             self.overlap_buffer_y = combined_y[overlap_start..].to_vec();
             self.overlap_buffer_smoothed = smoothed[overlap_start..].to_vec();
             if self.config.return_robustness_weights {
@@ -520,7 +552,9 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
         // Note: We return results in sorted order (by x) for streaming chunks.
         // Unsorting partial results is ambiguous since we only return a subset of the chunk.
         // The full batch adapter handles global unsorting when processing complete datasets.
-        let x_out = combined_x[return_start..return_start + y_smooth_out.len()].to_vec();
+        let return_start_x = return_start * dimensions;
+        let x_out_len = y_smooth_out.len() * dimensions;
+        let x_out = combined_x[return_start_x..return_start_x + x_out_len].to_vec();
 
         // Update diagnostics cumulatively
         let diagnostics = if let Some(ref mut state) = self.diagnostics_state {
@@ -533,6 +567,9 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
 
         Ok(LoessResult {
             x: x_out,
+            dimensions: self.config.dimensions,
+            distance_metric: self.config.distance_metric.clone(),
+            polynomial_degree: self.config.polynomial_degree,
             y: y_smooth_out,
             standard_errors: None,
             confidence_lower: None,
@@ -553,6 +590,9 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
         if self.overlap_buffer_x.is_empty() {
             return Ok(LoessResult {
                 x: Vec::new(),
+                dimensions: self.config.dimensions,
+                distance_metric: self.config.distance_metric.clone(),
+                polynomial_degree: self.config.polynomial_degree,
                 y: Vec::new(),
                 standard_errors: None,
                 confidence_lower: None,
@@ -580,7 +620,7 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
         };
 
         let robustness_weights = if self.config.return_robustness_weights {
-            Some(core::mem::take(&mut self.overlap_buffer_robustness_weights))
+            Some(mem::take(&mut self.overlap_buffer_robustness_weights))
         } else {
             None
         };
@@ -595,6 +635,9 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
 
         let result = LoessResult {
             x: self.overlap_buffer_x.clone(),
+            dimensions: self.config.dimensions,
+            distance_metric: self.config.distance_metric.clone(),
+            polynomial_degree: self.config.polynomial_degree,
             y: self.overlap_buffer_smoothed.clone(),
             standard_errors: None,
             confidence_lower: None,

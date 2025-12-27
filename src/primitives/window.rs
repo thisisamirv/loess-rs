@@ -25,7 +25,6 @@
 //! * Window indices always remain within the caller-provided array bounds.
 //! * The window correctly captures the q nearest neighbors for a given target point.
 //!
-//!
 //! ## Non-goals
 //!
 //! * This module does not handle data sorting (handled by `sorting` module).
@@ -117,17 +116,24 @@ impl Window {
     // Utility Methods
     // ========================================================================
 
-    /// Compute the maximum distance from `x_current` to any point in the window.
-    #[inline]
-    pub fn max_distance<T: Float>(&self, x: &[T], x_current: T) -> T {
-        T::max(x_current - x[self.left], x[self.right] - x_current)
-    }
-
     /// Calculate window size q from fraction alpha and data length n.
     #[inline]
     pub fn calculate_span<T: Float>(n: usize, frac: T) -> usize {
         let frac_n = frac * T::from(n).unwrap();
         let frac_n_int = frac_n.to_usize().unwrap_or(0);
         usize::max(2, usize::min(n, frac_n_int))
+    }
+
+    /// Check if the window is empty.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get the number of points in the window.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.right - self.left + 1
     }
 }

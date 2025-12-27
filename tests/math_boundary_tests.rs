@@ -1,7 +1,6 @@
 #![cfg(feature = "dev")]
 
 use loess_rs::internals::api::{Adapter, BoundaryPolicy, LoessBuilder as Loess, WeightFunction};
-use loess_rs::internals::math::boundary::apply_boundary_policy;
 
 #[test]
 fn test_boundary_policy_comparison() {
@@ -98,7 +97,7 @@ fn test_boundary_minimal_dataset() {
     let y = vec![10.0, 20.0];
 
     // window_size=2 => pad_len=1. min(1, n-1) = 1.
-    let (px, py) = apply_boundary_policy(&x, &y, 2, BoundaryPolicy::Extend);
+    let (px, py, _) = BoundaryPolicy::Extend.apply(&x, &y, 1, 2);
 
     // Should result in [x0-dx, x0, x1, x1+dx] => [-1.0, 0.0, 1.0, 2.0]
     assert_eq!(px.len(), 4);
@@ -116,7 +115,7 @@ fn test_boundary_large_window() {
     let y = vec![10.0, 20.0, 30.0];
 
     // window_size=10 => pad_len=5. min(5, 3-1) = 2.
-    let (px, _) = apply_boundary_policy(&x, &y, 10, BoundaryPolicy::Extend);
+    let (px, _, _) = BoundaryPolicy::Extend.apply(&x, &y, 1, 10);
 
     // pad_len is capped at n-1 = 2.
     // total_len = 3 + 2*2 = 7.
@@ -130,7 +129,7 @@ fn test_boundary_zero_dx() {
     let y = vec![10.0, 20.0, 30.0, 40.0];
 
     // x[1] - x[0] = 0.
-    let (px, _) = apply_boundary_policy(&x, &y, 4, BoundaryPolicy::Extend);
+    let (px, _, _) = BoundaryPolicy::Extend.apply(&x, &y, 1, 4);
 
     // Padding should all have x=1.0 on the left
     assert_eq!(px[0], 1.0);
@@ -144,7 +143,7 @@ fn test_boundary_small_window() {
     let y = vec![10.0, 20.0, 30.0, 40.0, 50.0];
 
     // window_size=2 => pad_len=1.
-    let (px, _) = apply_boundary_policy(&x, &y, 2, BoundaryPolicy::Reflect);
+    let (px, _, _) = BoundaryPolicy::Reflect.apply(&x, &y, 1, 2);
 
     assert_eq!(px.len(), 7); // 5 + 2*1
     assert_eq!(px[0], -1.0); // x0 - (x1 - x0) = 0 - (1 - 0) = -1

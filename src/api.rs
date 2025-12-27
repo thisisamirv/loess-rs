@@ -44,13 +44,16 @@ use crate::evaluation::intervals::IntervalMethod;
 use crate::primitives::backend::Backend;
 
 // Publicly re-exported types
-pub use crate::algorithms::regression::ZeroWeightFallback;
+pub use crate::adapters::online::UpdateMode;
+pub use crate::adapters::streaming::MergeStrategy;
+pub use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 pub use crate::algorithms::robustness::RobustnessMethod;
 pub use crate::engine::output::LoessResult;
 pub use crate::evaluation::cv::{KFold, LOOCV};
+pub use crate::math::boundary::BoundaryPolicy;
+pub use crate::math::distance::DistanceMetric;
 pub use crate::math::kernel::WeightFunction;
 pub use crate::primitives::errors::LoessError;
-pub use crate::primitives::partition::{BoundaryPolicy, MergeStrategy, UpdateMode};
 
 /// Marker types for selecting execution adapters.
 #[allow(non_snake_case)]
@@ -124,9 +127,18 @@ pub struct LoessBuilder<T> {
     /// Minimum points required for a valid fit (Online only).
     pub min_points: Option<usize>,
 
-    // ======================================
-    // DEV
-    // ======================================
+    /// Polynomial degree for local regression (0=constant, 1=linear, 2=quadratic).
+    pub polynomial_degree: Option<PolynomialDegree>,
+
+    /// Number of predictor dimensions (default: 1).
+    pub dimensions: Option<usize>,
+
+    /// Distance metric for nD neighborhood computation.
+    pub distance_metric: Option<DistanceMetric<T>>,
+
+    // ++++++++++++++++++++++++++++++++++++++
+    // +               DEV                  +
+    // ++++++++++++++++++++++++++++++++++++++
     /// Custom smooth pass function.
     #[doc(hidden)]
     pub custom_smooth_pass: Option<SmoothPassFn<T>>,
@@ -191,6 +203,9 @@ impl<T: Float> LoessBuilder<T> {
             overlap: None,
             window_capacity: None,
             min_points: None,
+            polynomial_degree: None,
+            dimensions: None,
+            distance_metric: None,
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -397,9 +412,40 @@ impl<T: Float> LoessBuilder<T> {
         self
     }
 
-    // ==========================
-    // Development Options
-    // ==========================
+    /// Set the polynomial degree for local regression.
+    ///
+    /// - `Constant` (degree 0): Weighted mean - fastest, least flexible
+    /// - `Linear` (degree 1, default): Standard LOESS - good balance
+    /// - `Quadratic` (degree 2): Better for curved regions, more expensive
+    pub fn degree(mut self, degree: PolynomialDegree) -> Self {
+        if self.polynomial_degree.is_some() {
+            self.duplicate_param = Some("degree");
+        }
+        self.polynomial_degree = Some(degree);
+        self
+    }
+
+    /// Set the number of predictor dimensions (default: 1).
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        if self.dimensions.is_some() {
+            self.duplicate_param = Some("dimensions");
+        }
+        self.dimensions = Some(dims);
+        self
+    }
+
+    /// Set the distance metric for nD neighborhood computation.
+    pub fn distance_metric(mut self, metric: DistanceMetric<T>) -> Self {
+        if self.distance_metric.is_some() {
+            self.duplicate_param = Some("distance_metric");
+        }
+        self.distance_metric = Some(metric);
+        self
+    }
+
+    // ++++++++++++++++++++++++++++++++++++++
+    // +               DEV                  +
+    // ++++++++++++++++++++++++++++++++++++++
 
     /// Set a custom smooth pass function for execution (only for dev)
     #[doc(hidden)]
@@ -500,10 +546,19 @@ impl<T: Float> LoessAdapter<T> for Batch {
         if let Some(cr) = builder.compute_residuals {
             result.compute_residuals = cr;
         }
+        if let Some(pd) = builder.polynomial_degree {
+            result.polynomial_degree = pd;
+        }
+        if let Some(dims) = builder.dimensions {
+            result.dimensions = dims;
+        }
+        if let Some(dm) = builder.distance_metric {
+            result.distance_metric = dm;
+        }
 
-        // ======================================
-        // DEV
-        // ======================================
+        // ++++++++++++++++++++++++++++++++++++++
+        // +               DEV                  +
+        // ++++++++++++++++++++++++++++++++++++++
         if let Some(sp) = builder.custom_smooth_pass {
             result.custom_smooth_pass = Some(sp);
         }
@@ -580,10 +635,19 @@ impl<T: Float> LoessAdapter<T> for Streaming {
         if let Some(ac) = builder.auto_convergence {
             result.auto_convergence = Some(ac);
         }
+        if let Some(pd) = builder.polynomial_degree {
+            result.polynomial_degree = pd;
+        }
+        if let Some(dims) = builder.dimensions {
+            result.dimensions = dims;
+        }
+        if let Some(dm) = builder.distance_metric {
+            result.distance_metric = dm;
+        }
 
-        // ======================================
-        // DEV
-        // ======================================
+        // ++++++++++++++++++++++++++++++++++++++
+        // +               DEV                  +
+        // ++++++++++++++++++++++++++++++++++++++
 
         if let Some(sp) = builder.custom_smooth_pass {
             result.custom_smooth_pass = Some(sp);
@@ -657,10 +721,19 @@ impl<T: Float> LoessAdapter<T> for Online {
         if let Some(ac) = builder.auto_convergence {
             result.auto_convergence = Some(ac);
         }
+        if let Some(pd) = builder.polynomial_degree {
+            result.polynomial_degree = pd;
+        }
+        if let Some(dims) = builder.dimensions {
+            result.dimensions = dims;
+        }
+        if let Some(dm) = builder.distance_metric {
+            result.distance_metric = dm;
+        }
 
-        // ======================================
-        // DEV
-        // ======================================
+        // ++++++++++++++++++++++++++++++++++++++
+        // +               DEV                  +
+        // ++++++++++++++++++++++++++++++++++++++
 
         if let Some(sp) = builder.custom_smooth_pass {
             result.custom_smooth_pass = Some(sp);

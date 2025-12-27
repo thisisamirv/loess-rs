@@ -144,7 +144,7 @@ fn test_build_subset_basic() {
     let y = vec![2.0f64, 4.0, 6.0, 8.0, 10.0];
     let indices = vec![0, 2, 4]; // Use points 0, 2, 4
 
-    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, &indices);
+    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, 1, &indices);
 
     assert_eq!(
         x_train,
@@ -167,7 +167,7 @@ fn test_build_subset_empty_indices() {
     let y = vec![2.0f64, 4.0, 6.0];
     let indices: Vec<usize> = vec![];
 
-    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, &indices);
+    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, 1, &indices);
 
     assert!(x_train.is_empty(), "X subset should be empty");
     assert!(y_train.is_empty(), "Y subset should be empty");
@@ -182,7 +182,7 @@ fn test_build_subset_all_indices() {
     let y = vec![2.0f64, 4.0, 6.0];
     let indices = vec![0, 1, 2];
 
-    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, &indices);
+    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, 1, &indices);
 
     assert_eq!(x_train, x, "X subset should match full dataset");
     assert_eq!(y_train, y, "Y subset should match full dataset");
@@ -197,7 +197,7 @@ fn test_build_subset_single_index() {
     let y = vec![2.0f64, 4.0, 6.0];
     let indices = vec![1];
 
-    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, &indices);
+    let (x_train, y_train) = CVKind::build_subset_from_indices(&x, &y, 1, &indices);
 
     assert_eq!(x_train, vec![2.0], "X subset should have single value");
     assert_eq!(y_train, vec![4.0], "Y subset should have single value");
@@ -257,7 +257,15 @@ fn test_cv_method_run_edge_cases() {
     // 1. n < 2 in LOOCV
     let x_mini = vec![1.0];
     let y_mini = vec![2.0];
-    let (best_mini, _) = CVKind::LOOCV.run(&x_mini, &y_mini, &[0.5, 0.8], None, smoother);
+    let (best_mini, _) = CVKind::LOOCV.run(
+        &x_mini,
+        &y_mini,
+        1,
+        &[0.5, 0.8],
+        None,
+        smoother,
+        None::<fn(&[f64], &[f64], &[f64], f64) -> Vec<f64>>,
+    );
     assert_eq!(best_mini, 0.5);
 }
 
@@ -274,7 +282,15 @@ fn test_kfold_insufficient_data() {
     // fold_size = 0.
     // fold 0..4: test_start = f*0 = 0. test_end = 0.
     // Last fold (k-1): test_start = 0, test_end = 3.
-    let (best, scores) = CVKind::KFold(5).run(&x, &y, &fractions, None, smoother);
+    let (best, scores) = CVKind::KFold(5).run(
+        &x,
+        &y,
+        1,
+        &fractions,
+        None,
+        smoother,
+        None::<fn(&[f64], &[f64], &[f64], f64) -> Vec<f64>>,
+    );
     assert!(best > 0.0);
     assert_eq!(scores.len(), 2);
 }
@@ -289,7 +305,15 @@ fn test_loocv_minimal_data() {
     // Smoother returns original y
     let smoother = |_: &[f64], y: &[f64], _: f64| y.to_vec();
 
-    let (best, scores) = CVKind::LOOCV.run(&x, &y, &fractions, None, smoother);
+    let (best, scores) = CVKind::LOOCV.run(
+        &x,
+        &y,
+        1,
+        &fractions,
+        None,
+        smoother,
+        None::<fn(&[f64], &[f64], &[f64], f64) -> Vec<f64>>,
+    );
     assert_eq!(best, 0.5);
     assert_eq!(scores.len(), 1);
 

@@ -18,8 +18,10 @@
 use approx::assert_relative_eq;
 use num_traits::Float;
 
+use loess_rs::internals::algorithms::regression::PolynomialDegree;
 use loess_rs::internals::engine::output::LoessResult;
 use loess_rs::internals::evaluation::diagnostics::Diagnostics;
+use loess_rs::internals::math::distance::DistanceMetric;
 
 // ============================================================================
 // Test Helper Trait
@@ -78,6 +80,9 @@ impl<T: Float> LoessResultTestExt<T> for LoessResult<T> {
 fn test_has_confidence_intervals_true() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: Some(vec![1.5]),
@@ -105,6 +110,9 @@ fn test_has_confidence_intervals_true() {
 fn test_has_confidence_intervals_false() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: Some(vec![1.5]),
@@ -132,6 +140,9 @@ fn test_has_confidence_intervals_false() {
 fn test_has_prediction_intervals_true() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -159,6 +170,9 @@ fn test_has_prediction_intervals_true() {
 fn test_has_prediction_intervals_false() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -186,6 +200,9 @@ fn test_has_prediction_intervals_false() {
 fn test_has_cv_scores_true() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -210,6 +227,9 @@ fn test_has_cv_scores_true() {
 fn test_has_cv_scores_false() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -239,6 +259,9 @@ fn test_smoothed_accessor() {
     let y_vals = vec![1.0, 2.0, 3.0];
     let lr = LoessResult {
         x: vec![0.0, 1.0, 2.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: y_vals.clone(),
         standard_errors: None,
         confidence_lower: None,
@@ -263,6 +286,9 @@ fn test_smoothed_accessor() {
 fn test_best_cv_score_present() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -289,6 +315,9 @@ fn test_best_cv_score_present() {
 fn test_best_cv_score_none() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -313,6 +342,9 @@ fn test_best_cv_score_none() {
 fn test_best_cv_score_single() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -343,6 +375,9 @@ fn test_best_cv_score_single() {
 fn test_confidence_width() {
     let lr = LoessResult {
         x: vec![0.0, 1.0, 2.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![1.0, 2.0, 3.0],
         standard_errors: None,
         confidence_lower: Some(vec![0.9, 1.9, 2.9]),
@@ -371,6 +406,9 @@ fn test_confidence_width() {
 fn test_confidence_width_none() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -395,6 +433,9 @@ fn test_confidence_width_none() {
 fn test_prediction_width() {
     let lr = LoessResult {
         x: vec![0.0, 1.0, 2.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![1.0, 2.0, 3.0],
         standard_errors: None,
         confidence_lower: None,
@@ -423,6 +464,9 @@ fn test_prediction_width() {
 fn test_prediction_width_none() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -447,6 +491,9 @@ fn test_prediction_width_none() {
 fn test_prediction_wider_than_confidence() {
     let lr = LoessResult {
         x: vec![0.0, 1.0, 2.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![1.0, 2.0, 3.0],
         standard_errors: None,
         confidence_lower: Some(vec![0.9, 1.9, 2.9]),
@@ -480,6 +527,9 @@ fn test_prediction_wider_than_confidence() {
 fn test_minimal_result() {
     let lr = LoessResult {
         x: vec![1.0, 2.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![10.0, 20.0],
         standard_errors: None,
         confidence_lower: None,
@@ -509,6 +559,9 @@ fn test_minimal_result() {
 fn test_maximal_result() {
     let lr = LoessResult {
         x: vec![1.0, 2.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![10.0, 20.0],
         standard_errors: Some(vec![0.1, 0.2]),
         confidence_lower: Some(vec![9.8, 19.6]),
@@ -546,6 +599,9 @@ fn test_maximal_result() {
 fn test_empty_cv_scores() {
     let lr = LoessResult {
         x: vec![1.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0],
         standard_errors: None,
         confidence_lower: None,
@@ -575,6 +631,9 @@ fn test_empty_cv_scores() {
 fn test_display_basic() {
     let lr = LoessResult {
         x: vec![1.0, 2.0, 3.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![10.0, 20.0, 30.0],
         standard_errors: None,
         confidence_lower: None,
@@ -593,7 +652,8 @@ fn test_display_basic() {
     assert!(!output.is_empty());
     assert!(output.contains("Summary"));
     assert!(output.contains("Data points: 3"));
-    assert!(output.contains("Fraction: 0.5"));
+    assert!(output.contains("Fraction:"));
+    assert!(output.contains("0.5"));
 }
 
 // ============================================================================
@@ -605,6 +665,9 @@ fn test_display_basic() {
 fn test_best_cv_score_with_nan() {
     let result = LoessResult {
         x: vec![1.0, 2.0, 3.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0, 4.0, 6.0],
         standard_errors: None,
         confidence_lower: None,
@@ -629,6 +692,9 @@ fn test_best_cv_score_with_nan() {
 fn test_best_cv_score_all_equal() {
     let result = LoessResult {
         x: vec![1.0, 2.0, 3.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![2.0, 4.0, 6.0],
         standard_errors: None,
         confidence_lower: None,
@@ -652,6 +718,9 @@ fn test_best_cv_score_all_equal() {
 fn test_display_with_empty_vectors() {
     let result = LoessResult {
         x: vec![],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![],
         standard_errors: None,
         confidence_lower: None,
@@ -677,6 +746,9 @@ fn test_display_with_empty_vectors() {
 fn test_display_with_all_fields() {
     let lr = LoessResult {
         x: vec![1.0, 2.0],
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y: vec![10.0, 20.0],
         standard_errors: Some(vec![0.1, 0.2]),
         confidence_lower: Some(vec![9.8, 19.6]),
@@ -722,6 +794,9 @@ fn test_display_large_dataset() {
 
     let lr = LoessResult {
         x,
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
         y,
         standard_errors: None,
         confidence_lower: None,

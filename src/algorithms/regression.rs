@@ -8,30 +8,27 @@
 //!
 //! ## Design notes
 //!
-//! * **Algorithm**: Uses weighted least squares (WLS) for local linear regression.
+//! * **Algorithm**: Uses weighted least squares (WLS) for local polynomial regression.
 //! * **Weights**: Computed from kernel functions, combined with robustness weights.
 //! * **Fallback**: Implements policies for handling zero-weight or degenerate cases.
 //! * **Generics**: Generic over `Float` types.
+//! * **Unified**: Handles both 1D and nD cases via a generalized solver.
 //!
 //! ## Key concepts
 //!
-//! * **Local Weighted Regression**: Fits a linear model `y = beta_0 + beta_1 * x` locally.
+//! * **Local Weighted Regression**: Fits a polynomial model locally.
 //! * **Weighted Least Squares**: Minimizes weighted sum of squared residuals.
 //! * **Robustness Weights**: Downweights outliers (multiplied with kernel weights).
-//! * **Zero-Weight Fallback**: Handles numerical stability issues (e.g., use local mean).
 //!
 //! ## Invariants
 //!
-//! * Window radius must be positive.
 //! * Weights are normalized for internal WLS calculations.
 //! * Fitted values are always finite.
 //!
 //! ## Non-goals
 //!
-//! * This module does not compute the windows (done by window module).
-//! * This module does not compute robustness weights (done by robustness module).
-//! * This module does not perform higher-degree polynomial regression.
-//! * This module does not validate input data.
+//! * This module does not manage the full smoothing iteration (handled by engine).
+//! * This module does not compute diagnostics or intervals.
 
 // Feature-gated imports
 #[cfg(not(feature = "std"))]
@@ -40,187 +37,137 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 // External dependencies
-use core::fmt::Debug;
 use num_traits::Float;
 
 // Internal dependencies
 use crate::math::kernel::WeightFunction;
-use crate::primitives::window::Window;
+use crate::math::neighborhood::Neighborhood;
 
 // ============================================================================
-// Regression Context
+// Polynomial Degree
 // ============================================================================
 
-/// Context containing all data needed to fit a single point.
-pub struct RegressionContext<'a, T: Float> {
-    /// Slice of x-values (independent variable)
-    pub x: &'a [T],
+/// Polynomial degree for local regression fitting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PolynomialDegree {
+    /// Degree 0: Local constant (weighted mean)
+    Constant,
 
-    /// Slice of y-values (dependent variable)
-    pub y: &'a [T],
+    /// Degree 1: Local linear regression (default)
+    #[default]
+    Linear,
 
-    /// Index of the point to fit
-    pub idx: usize,
+    /// Degree 2: Local quadratic regression
+    Quadratic,
 
-    /// Window for the local fit (defines neighborhood)
-    pub window: Window,
+    /// Degree 3: Local cubic regression
+    Cubic,
 
-    /// Whether to use robustness weights
-    pub use_robustness: bool,
-
-    /// Slice of robustness weights (all 1.0 if not using robustness)
-    pub robustness_weights: &'a [T],
-
-    /// Mutable slice of weights to be used in fitting
-    pub weights: &'a mut [T],
-
-    /// Weight function (kernel)
-    pub weight_function: WeightFunction,
-
-    /// Zero-weight fallback policy
-    pub zero_weight_fallback: ZeroWeightFallback,
+    /// Degree 4: Local quartic regression
+    Quartic,
 }
 
-// ============================================================================
-// Regression Trait
-// ============================================================================
-
-/// Trait for fitting a local regression at a single point.
-pub trait Regression<T: Float>: Sync + Send {
-    /// Fit the point specified in the context.
-    fn fit(&self, context: RegressionContext<T>) -> Option<T>;
-}
-
-// ============================================================================
-// Linear Regression Implementation
-// ============================================================================
-
-/// Standard local linear regression fitter.
-///
-/// # Special cases
-///
-/// * **Zero window radius**: Falls back to weighted average
-/// * **Zero weight sum**: Applies zero-weight fallback policy
-/// * **Zero variance**: Returns horizontal line at weighted mean
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LinearRegression;
-
-impl<T: Float> Regression<T> for LinearRegression {
-    fn fit(&self, context: RegressionContext<T>) -> Option<T> {
-        let n = context.x.len();
-
-        // Defensive bounds check
-        if context.idx >= n {
-            return None;
+impl PolynomialDegree {
+    /// Get the numeric degree value.
+    #[inline]
+    pub const fn value(&self) -> usize {
+        match self {
+            PolynomialDegree::Constant => 0,
+            PolynomialDegree::Linear => 1,
+            PolynomialDegree::Quadratic => 2,
+            PolynomialDegree::Cubic => 3,
+            PolynomialDegree::Quartic => 4,
         }
+    }
 
-        // Validate window bounds
-        if context.window.left >= n || context.window.right >= n {
-            return None;
-        }
+    /// Number of coefficients for 1D polynomial of this degree.
+    #[inline]
+    pub const fn num_coefficients_1d(&self) -> usize {
+        self.value() + 1
+    }
 
-        let x_current = context.x[context.idx];
-
-        // Compute window radius
-        let window_radius = context.window.max_distance(context.x, x_current);
-
-        if window_radius <= T::zero() {
-            // Degenerate window (all x-values identical): fall back to weighted average.
-            // We use uniform weights or robustness weights if enabled.
-            let mut sum_w = T::zero();
-            let mut sum_wy = T::zero();
-            for j in context.window.left..=context.window.right {
-                let w = if context.use_robustness {
-                    context.robustness_weights[j]
-                } else {
-                    T::one()
-                };
-                sum_w = sum_w + w;
-                sum_wy = sum_wy + w * context.y[j];
+    /// Number of coefficients for nD polynomial of this degree.
+    #[inline]
+    pub const fn num_coefficients_nd(&self, dimensions: usize) -> usize {
+        match self {
+            PolynomialDegree::Constant => 1,
+            PolynomialDegree::Linear => 1 + dimensions,
+            PolynomialDegree::Quadratic => 1 + dimensions + (dimensions * (dimensions + 1)) / 2,
+            PolynomialDegree::Cubic => {
+                let n = dimensions;
+                (n + 3) * (n + 2) * (n + 1) / 6
             }
+            PolynomialDegree::Quartic => {
+                let n = dimensions;
+                (n + 4) * (n + 3) * (n + 2) * (n + 1) / 24
+            }
+        }
+    }
 
-            if sum_w > T::zero() {
-                return Some(sum_wy / sum_w);
-            } else {
-                // If weight sum is zero, apply standard fallback (local mean or original)
-                return match context.zero_weight_fallback {
-                    ZeroWeightFallback::UseLocalMean => {
-                        let window_size = context.window.right - context.window.left + 1;
-                        let mean = context.y[context.window.left..=context.window.right]
-                            .iter()
-                            .copied()
-                            .fold(T::zero(), |acc, v| acc + v)
-                            / T::from(window_size as f64).unwrap_or(T::one());
-                        Some(mean)
+    /// Build polynomial terms for a point relative to center.
+    pub fn build_terms<T: Float>(&self, point: &[T], center: &[T], terms: &mut Vec<T>) {
+        terms.clear();
+        let d = point.len();
+
+        // Intercept
+        terms.push(T::one());
+
+        if *self == PolynomialDegree::Constant {
+            return;
+        }
+
+        // Precompute centered values to avoid repetitive substraction
+        // We'll store them in a temporary stack buffer if small, but here vec is acceptable.
+        // Or just map.
+        let centered: Vec<T> = point
+            .iter()
+            .zip(center.iter())
+            .map(|(&p, &c)| p - c)
+            .collect();
+
+        // Linear terms
+        for &val in &centered {
+            terms.push(val);
+        }
+
+        if *self == PolynomialDegree::Linear {
+            return;
+        }
+
+        // Quadratic terms
+        for i in 0..d {
+            for j in i..d {
+                terms.push(centered[i] * centered[j]);
+            }
+        }
+
+        if *self == PolynomialDegree::Quadratic {
+            return;
+        }
+
+        // Cubic terms
+        for i in 0..d {
+            for j in i..d {
+                for k in j..d {
+                    terms.push(centered[i] * centered[j] * centered[k]);
+                }
+            }
+        }
+
+        if *self == PolynomialDegree::Cubic {
+            return;
+        }
+
+        // Quartic terms
+        for i in 0..d {
+            for j in i..d {
+                for k in j..d {
+                    for l in k..d {
+                        terms.push(centered[i] * centered[j] * centered[k] * centered[l]);
                     }
-                    ZeroWeightFallback::ReturnOriginal => Some(context.y[context.idx]),
-                    ZeroWeightFallback::ReturnNone => None,
-                };
-            }
-        }
-
-        let weight_params = WeightParams::new(x_current, window_radius, context.use_robustness);
-
-        // Compute raw kernel weights (unnormalized, without robustness)
-        let (mut weight_sum, rightmost_idx) = context.weight_function.compute_window_weights(
-            context.x,
-            context.window.left,
-            context.window.right,
-            weight_params.x_current,
-            weight_params.window_radius,
-            weight_params.h1,
-            weight_params.h9,
-            context.weights,
-        );
-
-        // Apply robustness weights if needed and compute final sum
-        if context.use_robustness {
-            weight_sum = T::zero();
-            for j in context.window.left..=rightmost_idx {
-                let w_k = context.weights[j];
-                if w_k > T::zero() {
-                    let w_robust = context.robustness_weights[j];
-                    let w_final = w_k * w_robust;
-                    context.weights[j] = w_final;
-                    weight_sum = weight_sum + w_final;
                 }
             }
         }
-
-        if weight_sum <= T::zero() {
-            // Handle zero-weight case according to fallback policy
-            match context.zero_weight_fallback {
-                ZeroWeightFallback::UseLocalMean => {
-                    let window_size = context.window.right - context.window.left + 1;
-                    let cnt = T::from(window_size).unwrap_or(T::one());
-                    let mean = context.y[context.window.left..=context.window.right]
-                        .iter()
-                        .copied()
-                        .fold(T::zero(), |acc, v| acc + v)
-                        / cnt;
-                    return Some(mean);
-                }
-                ZeroWeightFallback::ReturnOriginal => {
-                    return Some(context.y[context.idx]);
-                }
-                ZeroWeightFallback::ReturnNone => {
-                    return None;
-                }
-            }
-        }
-
-        // Perform weighted least squares regression
-        // We pass the weight_sum to avoid re-summing it inside GLSModel::fit_wls
-        Some(GLSModel::local_wls_with_sum(
-            context.x,
-            context.y,
-            context.weights,
-            context.window.left,
-            rightmost_idx,
-            x_current,
-            window_radius,
-            weight_sum,
-        ))
     }
 }
 
@@ -243,18 +190,18 @@ pub enum ZeroWeightFallback {
 }
 
 impl ZeroWeightFallback {
-    /// Create from u8 flag for backward compatibility.
+    /// Create from u8 flag.
     #[inline]
     pub fn from_u8(flag: u8) -> Self {
         match flag {
             0 => ZeroWeightFallback::UseLocalMean,
             1 => ZeroWeightFallback::ReturnOriginal,
             2 => ZeroWeightFallback::ReturnNone,
-            _ => ZeroWeightFallback::UseLocalMean, // Default for unknown values
+            _ => ZeroWeightFallback::UseLocalMean,
         }
     }
 
-    /// Convert to u8 flag for backward compatibility.
+    /// Convert to u8 flag.
     #[inline]
     pub fn to_u8(self) -> u8 {
         match self {
@@ -266,248 +213,334 @@ impl ZeroWeightFallback {
 }
 
 // ============================================================================
-// Weight Parameters
+// Regression Context
 // ============================================================================
 
-/// Parameters for weight computation.
-///
-/// # Implementation Note
-///
-/// The thresholds `h1` and `h9` are implementation optimizations:
-/// * `h1 = 0.001 × window_radius`: Points closer than this get weight 1.0
-///   (avoids near-zero distance numerical issues)
-/// * `h9 = 0.999 × window_radius`: Points farther than this get weight 0.0
-///   (early termination for efficiency in sorted arrays)
-///
-/// These are not formal LOESS parameters but implementation details for
-/// numerical stability and performance.
-pub struct WeightParams<T: Float> {
-    /// Current x-value being fitted
-    pub x_current: T,
+/// Context containing all data needed to fit a single point (unified 1D/nD).
+pub struct RegressionContext<'a, T: Float> {
+    /// Flattened array of predictor values.
+    /// For 1D: [x₁, x₂, ...]
+    /// For nD: [x₁₁, x₁₂, ..., x₂₁, x₂₂, ...]
+    pub x: &'a [T],
 
-    /// Window radius - defines the scale of the local fit
-    pub window_radius: T,
+    /// Number of dimensions per point.
+    pub dimensions: usize,
 
-    /// Near-threshold: points closer than this get weight 1.0.
-    /// Internal optimization: 0.001 × radius.
-    pub h1: T,
+    /// Slice of response values.
+    pub y: &'a [T],
 
-    /// Far-threshold: points farther than this get weight 0.0.
-    /// Internal optimization: 0.999 × radius.
-    pub h9: T,
+    /// Index of the current query point (if using a point from x).
+    pub query_idx: usize,
+
+    /// Explicit query point (if not using query_idx).
+    /// If None, assumes query is `x[query_idx]`.
+    pub query_point: Option<&'a [T]>,
+
+    /// Neighborhood of k-nearest neighbors.
+    pub neighborhood: &'a Neighborhood<T>,
+
+    /// Whether to use robustness weights.
+    pub use_robustness: bool,
+
+    /// Robustness weights (all 1.0 if not using).
+    pub robustness_weights: &'a [T],
+
+    /// Weight function (kernel).
+    pub weight_function: WeightFunction,
+
+    /// Zero-weight fallback policy.
+    pub zero_weight_fallback: ZeroWeightFallback,
+
+    /// Polynomial degree.
+    pub polynomial_degree: PolynomialDegree,
+
+    /// Whether to compute and return leverage.
+    pub compute_leverage: bool,
 }
 
-impl<T: Float> WeightParams<T> {
-    /// Construct WeightParams with validated window radius.
-    pub fn new(x_current: T, window_radius: T, _use_robustness: bool) -> Self {
-        debug_assert!(
-            window_radius > T::zero(),
-            "WeightParams::new: window_radius must be positive"
-        );
+// ============================================================================
+// WLS Fitting (Unified)
+// ============================================================================
 
-        // In release builds avoid panic: clamp tiny/zero radius to small epsilon
-        let radius = if window_radius > T::zero() {
-            window_radius
+impl<'a, T: Float> RegressionContext<'a, T> {
+    /// Returns the (predicted value, leverage) at the query point.
+    pub fn fit(&self) -> Option<(T, T)> {
+        let n_neighbors = self.neighborhood.len();
+        if n_neighbors == 0 {
+            return None;
+        }
+
+        let d = self.dimensions;
+        let n_coeffs = self.polynomial_degree.num_coefficients_nd(d);
+        let max_distance = self.neighborhood.max_distance;
+
+        // Handle zero bandwidth case (all neighbors at same location)
+        if max_distance <= T::epsilon() {
+            let (val, sum_w) = self.weighted_mean_and_sum();
+            let leverage = if sum_w > T::epsilon() {
+                T::one() / sum_w
+            } else {
+                T::zero()
+            };
+            return Some((val, leverage));
+        }
+
+        // Compute final weights (kernel × robustness)
+        let mut weights = Vec::with_capacity(n_neighbors);
+        for i in 0..n_neighbors {
+            let neighbor_idx = self.neighborhood.indices[i];
+            let dist = self.neighborhood.distances[i];
+
+            // Normalize distance by bandwidth
+            let u = dist / max_distance;
+
+            // Kernel weight
+            let kernel_w = self.weight_function.compute_weight(u);
+
+            // Combined weight
+            let w = if self.use_robustness {
+                kernel_w * self.robustness_weights[neighbor_idx]
+            } else {
+                kernel_w
+            };
+
+            weights.push(w);
+        }
+
+        // Check numerical stability of weights
+        let weight_sum: T = weights.iter().copied().fold(T::zero(), |a, b| a + b);
+        if weight_sum <= T::epsilon() {
+            return self.handle_zero_weights();
+        }
+
+        // Get query point coordinates
+        let query_point = if let Some(qp) = self.query_point {
+            qp
         } else {
-            // Small absolute fallback for numerical stability
-            T::from(1e-12).unwrap()
+            let query_offset = self.query_idx * d;
+            &self.x[query_offset..query_offset + d]
         };
 
-        let h1 = T::from(0.001).unwrap() * radius;
-        let h9 = T::from(0.999).unwrap() * radius;
-
-        Self {
-            x_current,
-            window_radius: radius,
-            h1,
-            h9,
+        // For constant degree, just compute weighted mean
+        if self.polynomial_degree == PolynomialDegree::Constant {
+            let (val, sum_w) = self.weighted_mean_and_sum();
+            let leverage = if sum_w > T::epsilon() {
+                T::one() / sum_w
+            } else {
+                T::zero()
+            };
+            return Some((val, leverage));
         }
-    }
-}
 
-// ============================================================================
-// Generalized Least Squares Model
-// ============================================================================
-
-/// Generalized Least Squares (GLS) model.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GLSModel<T: Float> {
-    /// Slope (beta_1)
-    pub slope: T,
-
-    /// Intercept (beta_0)
-    pub intercept: T,
-
-    /// Weighted mean of x-values
-    pub x_mean: T,
-
-    /// Weighted mean of y-values
-    pub y_mean: T,
-}
-
-impl<T: Float> GLSModel<T> {
-    /// Predict y-value for a given x.
-    fn predict(&self, x: T) -> T {
-        self.intercept + self.slope * x
+        // Build and solve WLS system
+        self.fit_polynomial_wls(&weights, query_point, n_coeffs)
     }
 
-    /// Fit Ordinary Least Squares (OLS) regression.
-    fn fit_ols(x: &[T], y: &[T]) -> Self
-    where
-        T: Debug,
-    {
-        let n = x.len();
-        if n == 0 {
-            return GLSModel {
-                slope: T::zero(),
-                intercept: T::zero(),
-                x_mean: T::zero(),
-                y_mean: T::zero(),
-            };
-        }
-
-        let n_t = T::from(n).unwrap_or(T::one());
-
-        let mut sum_x = T::zero();
-        let mut sum_y = T::zero();
-
-        for i in 0..n {
-            sum_x = sum_x + x[i];
-            sum_y = sum_y + y[i];
-        }
-
-        let x_mean = sum_x / n_t;
-        let y_mean = sum_y / n_t;
-
-        let mut variance = T::zero();
-        let mut covariance = T::zero();
-
-        for i in 0..n {
-            let dx = x[i] - x_mean;
-            let dy = y[i] - y_mean;
-            variance = variance + dx * dx;
-            covariance = covariance + dx * dy;
-        }
-
-        let tol = T::from(1e-12).unwrap();
-        if variance <= tol {
-            // Fallback: horizontal line at y_mean
-            return GLSModel {
-                slope: T::zero(),
-                intercept: y_mean,
-                x_mean,
-                y_mean,
-            };
-        }
-
-        let slope = covariance / variance;
-        let intercept = y_mean - slope * x_mean;
-
-        GLSModel {
-            slope,
-            intercept,
-            x_mean,
-            y_mean,
+    /// Handle zero weight cases using fallback policy.
+    fn handle_zero_weights(&self) -> Option<(T, T)> {
+        match self.zero_weight_fallback {
+            ZeroWeightFallback::UseLocalMean => {
+                // Unweighted mean of the neighborhood y-values
+                let n = T::from(self.neighborhood.len()).unwrap();
+                let sum_y = self
+                    .neighborhood
+                    .indices
+                    .iter()
+                    .map(|&i| self.y[i])
+                    .fold(T::zero(), |a, b| a + b);
+                Some((sum_y / n, T::zero()))
+            }
+            ZeroWeightFallback::ReturnOriginal => {
+                // If we are fitting a point in the set (idx valid)
+                Some((self.y[self.query_idx], T::zero()))
+            }
+            ZeroWeightFallback::ReturnNone => None,
         }
     }
 
-    /// Compute global OLS linear fit for the full dataset.
-    pub fn global_ols(x: &[T], y: &[T]) -> Vec<T>
-    where
-        T: Debug,
-    {
-        let model = Self::fit_ols(x, y);
-        x.iter().map(|&xi| model.predict(xi)).collect()
+    /// Compute weighted mean and sum of weights.
+    fn weighted_mean_and_sum(&self) -> (T, T) {
+        let mut sum_wy = T::zero();
+        let mut sum_w = T::zero();
+
+        let max_dist = self.neighborhood.max_distance;
+        let bandwidth = if max_dist > T::epsilon() {
+            max_dist
+        } else {
+            T::one()
+        };
+
+        for i in 0..self.neighborhood.len() {
+            let idx = self.neighborhood.indices[i];
+            let dist = self.neighborhood.distances[i];
+
+            let u = dist / bandwidth;
+            let kernel_w = self.weight_function.compute_weight(u);
+
+            let w = if self.use_robustness {
+                kernel_w * self.robustness_weights[idx]
+            } else {
+                kernel_w
+            };
+
+            sum_wy = sum_wy + w * self.y[idx];
+            sum_w = sum_w + w;
+        }
+
+        let val = if sum_w > T::epsilon() {
+            sum_wy / sum_w
+        } else {
+            // Fallback to simple mean if weights collapsed
+            let n = T::from(self.neighborhood.len()).unwrap();
+            self.neighborhood
+                .indices
+                .iter()
+                .map(|&i| self.y[i])
+                .fold(T::zero(), |a, b| a + b)
+                / n
+        };
+        (val, sum_w)
     }
 
-    /// Fit Weighted Least Squares (WLS) regression.
-    fn fit_wls(x: &[T], y: &[T], weights: &[T], window_radius: T, sum_w: T) -> GLSModel<T> {
-        let n = x.len();
-        if n == 0 || sum_w <= T::zero() {
-            return GLSModel {
-                slope: T::zero(),
-                intercept: T::zero(),
-                x_mean: T::zero(),
-                y_mean: T::zero(),
-            };
-        }
-
-        // Compute weighted means
-        let mut x_mean = T::zero();
-        let mut y_mean = T::zero();
-        for i in 0..n {
-            let w = weights[i];
-            x_mean = x_mean + w * x[i];
-            y_mean = y_mean + w * y[i];
-        }
-
-        x_mean = x_mean / sum_w;
-        y_mean = y_mean / sum_w;
-
-        // Degenerate window_radius: simple weighted average
-        if window_radius <= T::zero() {
-            return GLSModel {
-                slope: T::zero(),
-                intercept: y_mean,
-                x_mean,
-                y_mean,
-            };
-        }
-
-        // Compute weighted covariance and variance
-        let mut variance = T::zero(); // sum(w * (x - x_mean)^2)
-        let mut covariance = T::zero(); // sum(w * (x - x_mean) * (y - y_mean))
-
-        for i in 0..n {
-            let w = weights[i] / sum_w; // Implicitly use normalized weight for variance/covariance
-            let dx = x[i] - x_mean;
-            let dy = y[i] - y_mean;
-            variance = variance + w * dx * dx;
-            covariance = covariance + w * dx * dy;
-        }
-
-        // Numerical stability check for variance
-        let abs_tol = T::from(1e-7).unwrap();
-        let rel_tol = T::epsilon() * window_radius * window_radius;
-        let tol = abs_tol.max(rel_tol);
-
-        if variance <= tol {
-            return GLSModel {
-                slope: T::zero(),
-                intercept: y_mean,
-                x_mean,
-                y_mean,
-            };
-        }
-
-        let slope = covariance / variance;
-        let intercept = y_mean - slope * x_mean;
-
-        GLSModel {
-            slope,
-            intercept,
-            x_mean,
-            y_mean,
-        }
-    }
-
-    /// Weighted linear regression evaluated at a specific point with precomputed weight sum.
-    #[allow(clippy::too_many_arguments)]
-    pub fn local_wls_with_sum(
-        x: &[T],
-        y: &[T],
+    /// Fit polynomial via weighted least squares.
+    fn fit_polynomial_wls(
+        &self,
         weights: &[T],
-        left: usize,
-        right: usize,
-        x_current: T,
-        window_radius: T,
-        sum_w: T,
-    ) -> T {
-        let window_x = &x[left..=right];
-        let window_y = &y[left..=right];
-        let window_weights = &weights[left..=right];
+        query_point: &[T],
+        n_coeffs: usize,
+    ) -> Option<(T, T)> {
+        let n_neighbors = self.neighborhood.len();
+        let d = self.dimensions;
 
-        let model = Self::fit_wls(window_x, window_y, window_weights, window_radius, sum_w);
-        model.predict(x_current)
+        // Need at least as many neighbors as coefficients
+        if n_neighbors < n_coeffs {
+            let (val, sum_w) = self.weighted_mean_and_sum();
+            return Some((
+                val,
+                if sum_w > T::epsilon() {
+                    T::one() / sum_w
+                } else {
+                    T::zero()
+                },
+            ));
+        }
+
+        // Build XᵀWX and XᵀWy
+        let mut xtw_x = vec![T::zero(); n_coeffs * n_coeffs];
+        let mut xtw_y = vec![T::zero(); n_coeffs];
+        let mut terms = Vec::with_capacity(n_coeffs);
+
+        for (i, &neighbor_idx) in self.neighborhood.indices.iter().enumerate() {
+            let w = weights[i];
+            if w <= T::epsilon() {
+                continue;
+            }
+
+            let offset = neighbor_idx * d;
+            let neighbor_point = &self.x[offset..offset + d];
+            let y_val = self.y[neighbor_idx];
+
+            self.polynomial_degree
+                .build_terms(neighbor_point, query_point, &mut terms);
+
+            for j in 0..n_coeffs {
+                xtw_y[j] = xtw_y[j] + w * terms[j] * y_val;
+                for k in j..n_coeffs {
+                    let val = w * terms[j] * terms[k];
+                    xtw_x[j * n_coeffs + k] = xtw_x[j * n_coeffs + k] + val;
+                    if k != j {
+                        xtw_x[k * n_coeffs + j] = xtw_x[k * n_coeffs + j] + val;
+                    }
+                }
+            }
+        }
+
+        // Solve linear system
+        let beta = LinearSolver::solve_symmetric(&xtw_x, &xtw_y, n_coeffs)?;
+
+        let leverage = if self.compute_leverage {
+            let mut e1 = vec![T::zero(); n_coeffs];
+            e1[0] = T::one();
+            let v = LinearSolver::solve_symmetric(&xtw_x, &e1, n_coeffs)?;
+            v[0]
+        } else {
+            T::zero()
+        };
+
+        Some((beta[0], leverage))
+    }
+}
+
+// ============================================================================
+// Linear Solver
+// ============================================================================
+
+/// Helper struct for solving linear systems (e.g., Cholesky decomposition).
+pub struct LinearSolver;
+
+impl LinearSolver {
+    /// Solve Ax = b where A is symmetric positive definite
+    pub fn solve_symmetric<T: Float>(a: &[T], b: &[T], n: usize) -> Option<Vec<T>> {
+        let l = Self::cholesky_decompose(a, n)?;
+
+        // Forward Ly = b
+        let mut y = vec![T::zero(); n];
+        for i in 0..n {
+            let mut sum = b[i];
+            for j in 0..i {
+                sum = sum - l[i * n + j] * y[j];
+            }
+            if l[i * n + i].abs() <= T::epsilon() {
+                return None;
+            }
+            y[i] = sum / l[i * n + i];
+        }
+
+        // Backward Lᵀx = y
+        let mut x = vec![T::zero(); n];
+        for i in (0..n).rev() {
+            let mut sum = y[i];
+            for j in (i + 1)..n {
+                sum = sum - l[j * n + i] * x[j];
+            }
+            if l[i * n + i].abs() <= T::epsilon() {
+                return None;
+            }
+            x[i] = sum / l[i * n + i];
+        }
+        Some(x)
+    }
+
+    /// Cholesky decomposition A = LLᵀ
+    pub fn cholesky_decompose<T: Float>(a: &[T], n: usize) -> Option<Vec<T>> {
+        let mut l = vec![T::zero(); n * n];
+
+        for i in 0..n {
+            for j in 0..=i {
+                let mut sum = a[i * n + j];
+                for k in 0..j {
+                    sum = sum - l[i * n + k] * l[j * n + k];
+                }
+
+                if i == j {
+                    if sum <= T::zero() {
+                        // Regularization
+                        let reg = T::from(1e-10).unwrap();
+                        sum = sum + reg;
+                        if sum <= T::zero() {
+                            return None;
+                        }
+                    }
+                    l[i * n + j] = sum.sqrt();
+                } else {
+                    let diag = l[j * n + j];
+                    if diag.abs() <= T::epsilon() {
+                        return None;
+                    }
+                    l[i * n + j] = sum / diag;
+                }
+            }
+        }
+        Some(l)
     }
 }

@@ -21,11 +21,10 @@
 use approx::assert_relative_eq;
 use num_traits::Float;
 
+use loess_rs::internals::algorithms::regression::PolynomialDegree;
 use loess_rs::internals::algorithms::robustness::RobustnessMethod;
-use loess_rs::internals::api::BoundaryPolicy;
-use loess_rs::internals::engine::executor::{
-    ExecutorOutput, IterationBuffers, LoessConfig, LoessExecutor,
-};
+use loess_rs::internals::api::{BoundaryPolicy, DistanceMetric};
+use loess_rs::internals::engine::executor::{ExecutorOutput, LoessConfig, LoessExecutor};
 use loess_rs::internals::math::kernel::WeightFunction;
 
 // ============================================================================
@@ -144,6 +143,9 @@ fn test_config_custom() {
         parallel: false,
         backend: None,
         cv_seed: None,
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
     };
 
     assert_eq!(config.fraction, Some(0.5));
@@ -339,6 +341,9 @@ fn test_config_f32() {
         parallel: false,
         backend: None,
         cv_seed: None,
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
     };
 
     assert_eq!(config.fraction, Some(0.5f32));
@@ -392,6 +397,9 @@ fn test_executor_convergence_zero_tolerance() {
         parallel: false,
         backend: None,
         cv_seed: None,
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
     };
 
     let output = LoessExecutor::run_with_config(&x, &y, config);
@@ -428,6 +436,9 @@ fn test_executor_delta_equals_range() {
         parallel: false,
         backend: None,
         cv_seed: None,
+        dimensions: 1,
+        distance_metric: DistanceMetric::Euclidean,
+        polynomial_degree: PolynomialDegree::Linear,
     };
 
     let output = LoessExecutor::run_with_config(&x, &y, config);
@@ -435,20 +446,6 @@ fn test_executor_delta_equals_range() {
     // Should still produce valid output
     assert_eq!(output.smoothed.len(), 5);
     assert!(output.smoothed.iter().all(|v| v.is_finite()));
-}
-
-/// Test IterationBuffers allocation without convergence tracking.
-#[test]
-fn test_iteration_buffers_no_convergence() {
-    let buffers = IterationBuffers::<f64>::allocate(5, false);
-
-    assert_eq!(buffers.y_smooth.len(), 5);
-    assert_eq!(buffers.robustness_weights.len(), 5);
-    assert_eq!(buffers.residuals.len(), 5);
-    assert_eq!(buffers.weights.len(), 5);
-
-    // y_prev should be empty when use_convergence=false
-    assert!(buffers.y_prev.is_empty());
 }
 
 // ============================================================================

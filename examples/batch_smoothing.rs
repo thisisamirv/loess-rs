@@ -399,7 +399,7 @@ fn example_8_benchmark() -> Result<(), LoessError> {
     println!("{}", "-".repeat(80));
 
     // Generate a larger synthetic dataset
-    let n = 10_000;
+    let n = 1_000;
     let x: Vec<f64> = (0..n).map(|i| i as f64).collect();
     let y: Vec<f64> = x
         .iter()

@@ -34,3 +34,9 @@ pub mod mad;
 
 /// Boundary padding utilities.
 pub mod boundary;
+
+/// Distance metrics for nD LOESS.
+pub mod distance;
+
+/// nD neighborhood search (KD-Tree implementation).
+pub mod neighborhood;

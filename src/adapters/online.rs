@@ -45,15 +45,27 @@ use core::fmt::Debug;
 use num_traits::Float;
 
 // Internal dependencies
-use crate::algorithms::regression::{LinearRegression, ZeroWeightFallback};
+use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn};
 use crate::engine::executor::{LoessConfig, LoessExecutor};
 use crate::engine::validator::Validator;
+use crate::math::boundary::BoundaryPolicy;
+use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
 use crate::primitives::backend::Backend;
 use crate::primitives::errors::LoessError;
-use crate::primitives::partition::{BoundaryPolicy, UpdateMode};
+
+/// Update mode for online LOESS processing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpdateMode {
+    /// Recompute all points in the window from scratch.
+    Full,
+
+    /// Optimized incremental update.
+    #[default]
+    Incremental,
+}
 
 // ============================================================================
 // Online LOESS Builder
@@ -103,6 +115,15 @@ pub struct OnlineLoessBuilder<T: Float> {
 
     /// Deferred error from adapter conversion
     pub deferred_error: Option<LoessError>,
+
+    /// Polynomial degree for local regression
+    pub polynomial_degree: PolynomialDegree,
+
+    /// Number of predictor dimensions (default: 1).
+    pub dimensions: usize,
+
+    /// Distance metric for nD neighborhood computation.
+    pub distance_metric: DistanceMetric<T>,
 
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
@@ -160,6 +181,9 @@ impl<T: Float> OnlineLoessBuilder<T> {
             return_robustness_weights: false,
             auto_convergence: None,
             deferred_error: None,
+            polynomial_degree: PolynomialDegree::default(),
+            dimensions: 1,
+            distance_metric: DistanceMetric::default(),
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -366,23 +390,36 @@ pub struct OnlineLoess<T: Float> {
 
 impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
     /// Add a new point and get its smoothed value.
-    pub fn add_point(&mut self, x: T, y: T) -> Result<Option<OnlineOutput<T>>, LoessError> {
+    pub fn add_point(&mut self, x: &[T], y: T) -> Result<Option<OnlineOutput<T>>, LoessError> {
         // Validate new point
-        Validator::validate_scalar(x, "x")?;
+        let dimensions = self.config.dimensions;
+        if x.len() != dimensions {
+            return Err(LoessError::MismatchedInputs {
+                x_len: x.len(),
+                y_len: 1,
+            });
+        }
+        for &xi in x {
+            Validator::validate_scalar(xi, "x")?;
+        }
         Validator::validate_scalar(y, "y")?;
 
         // Add to window
-        self.window_x.push_back(x);
+        for &xi in x {
+            self.window_x.push_back(xi);
+        }
         self.window_y.push_back(y);
 
         // Evict oldest if over capacity
-        if self.window_x.len() > self.config.window_capacity {
-            self.window_x.pop_front();
+        if self.window_y.len() > self.config.window_capacity {
+            for _ in 0..dimensions {
+                self.window_x.pop_front();
+            }
             self.window_y.pop_front();
         }
 
         // Check if we have enough points
-        if self.window_x.len() < self.config.min_points {
+        if self.window_y.len() < self.config.min_points {
             return Ok(None);
         }
 
@@ -395,16 +432,17 @@ impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
         let x_vec = &self.scratch_x;
         let y_vec = &self.scratch_y;
 
-        // Special case: exactly two points, use exact linear fit
-        if x_vec.len() == 2 {
+        // Special case: exactly two points, use exact linear fit (1D only)
+        if y_vec.len() == 2 && dimensions == 1 {
             let x0 = x_vec[0];
             let x1 = x_vec[1];
             let y0 = y_vec[0];
             let y1 = y_vec[1];
 
             let smoothed = if x1 != x0 {
+                let last_x = x[0];
                 let slope = (y1 - y0) / (x1 - x0);
-                y0 + slope * (x1 - x0)
+                y0 + slope * (last_x - x0)
             } else {
                 // Identical x: use mean for stability
                 (y0 + y1) / T::from(2.0).unwrap()
@@ -426,31 +464,37 @@ impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
         // Choose update strategy based on configuration
         let (smoothed, std_err, rob_weight) = match self.config.update_mode {
             UpdateMode::Incremental => {
-                // Incremental mode: fit only the latest point
-                let n = x_vec.len();
-                let window_size = (self.config.fraction * T::from(n).unwrap())
-                    .ceil()
-                    .to_usize()
-                    .unwrap_or(n)
-                    .max(2)
-                    .min(n);
+                // Incremental mode: use full LOESS but only return the latest point's value
+                let zero_flag = self.config.zero_weight_fallback.to_u8();
 
-                let fitter = LinearRegression;
-                let mut weights = vec![T::zero(); n];
-                let robustness_weights = vec![T::one(); n];
+                let config = LoessConfig {
+                    fraction: Some(self.config.fraction),
+                    iterations: 0, // No robustness for incremental mode (speed)
+                    delta: self.config.delta,
+                    weight_function: self.config.weight_function,
+                    robustness_method: self.config.robustness_method,
+                    zero_weight_fallback: zero_flag,
+                    boundary_policy: self.config.boundary_policy,
+                    polynomial_degree: self.config.polynomial_degree,
+                    dimensions: self.config.dimensions,
+                    distance_metric: self.config.distance_metric.clone(),
+                    auto_convergence: None,
+                    cv_fractions: None,
+                    cv_kind: None,
+                    return_variance: None,
+                    cv_seed: None,
+                    custom_smooth_pass: self.config.custom_smooth_pass,
+                    custom_cv_pass: self.config.custom_cv_pass,
+                    custom_interval_pass: self.config.custom_interval_pass,
+                    custom_fit_pass: self.config.custom_fit_pass,
+                    parallel: self.config.parallel.unwrap_or(false),
+                    backend: self.config.backend,
+                };
 
-                let (smoothed_val, _) = LoessExecutor::fit_single_point(
-                    x_vec,
-                    y_vec,
-                    n - 1, // Latest point
-                    window_size,
-                    false, // No robustness for single point
-                    &robustness_weights,
-                    &mut weights,
-                    self.config.weight_function,
-                    self.config.zero_weight_fallback,
-                    &fitter,
-                );
+                let result = LoessExecutor::run_with_config(x_vec, y_vec, config);
+                let smoothed_val = result.smoothed.last().copied().ok_or_else(|| {
+                    LoessError::InvalidNumericValue("No smoothed output produced".into())
+                })?;
 
                 (smoothed_val, None, Some(T::one()))
             }
@@ -464,6 +508,9 @@ impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
                     robustness_method: self.config.robustness_method,
                     zero_weight_fallback: zero_flag,
                     boundary_policy: self.config.boundary_policy,
+                    polynomial_degree: self.config.polynomial_degree,
+                    dimensions: self.config.dimensions,
+                    distance_metric: self.config.distance_metric.clone(),
                     auto_convergence: self.config.auto_convergence,
                     cv_fractions: None,
                     cv_kind: None,

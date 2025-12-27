@@ -56,40 +56,46 @@ impl Validator {
     // ========================================================================
 
     /// Validate input arrays for LOESS smoothing.
-    pub fn validate_inputs<T: Float>(x: &[T], y: &[T]) -> Result<(), LoessError> {
+    pub fn validate_inputs<T: Float>(
+        x: &[T],
+        y: &[T],
+        dimensions: usize,
+    ) -> Result<(), LoessError> {
         // Check 1: Non-empty arrays
         if x.is_empty() || y.is_empty() {
             return Err(LoessError::EmptyInput);
         }
 
-        // Check 2: Matching lengths
-        let n = x.len();
-        if n != y.len() {
+        // Check 2: Matching lengths (x.len() should be y.len() * dimensions)
+        let n_y = y.len();
+        if x.len() != n_y * dimensions {
             return Err(LoessError::MismatchedInputs {
-                x_len: n,
-                y_len: y.len(),
+                x_len: x.len(),
+                y_len: n_y,
             });
         }
 
         // Check 3: Sufficient points for regression
-        if n < 2 {
-            return Err(LoessError::TooFewPoints { got: n, min: 2 });
+        if n_y < 2 {
+            return Err(LoessError::TooFewPoints { got: n_y, min: 2 });
         }
 
         // Check 4: All values finite (combined loop for cache locality)
-        for i in 0..n {
-            if !x[i].is_finite() {
+        for (i, &val) in x.iter().enumerate() {
+            if !val.is_finite() {
                 return Err(LoessError::InvalidNumericValue(format!(
                     "x[{}]={}",
                     i,
-                    x[i].to_f64().unwrap_or(f64::NAN)
+                    val.to_f64().unwrap_or(f64::NAN)
                 )));
             }
-            if !y[i].is_finite() {
+        }
+        for (i, &val) in y.iter().enumerate() {
+            if !val.is_finite() {
                 return Err(LoessError::InvalidNumericValue(format!(
                     "y[{}]={}",
                     i,
-                    y[i].to_f64().unwrap_or(f64::NAN)
+                    val.to_f64().unwrap_or(f64::NAN)
                 )));
             }
         }

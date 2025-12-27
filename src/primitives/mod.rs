@@ -24,14 +24,8 @@
 //! Layer 1: Primitives ← You are here
 //! ```
 
-/// Sorting utilities.
-pub mod sorting;
-
 /// Windowing logic.
 pub mod window;
-
-/// Partition and merge utilities for chunked data processing.
-pub mod partition;
 
 /// Shared error types.
 pub mod errors;

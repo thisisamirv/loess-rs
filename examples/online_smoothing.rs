@@ -72,7 +72,7 @@ fn example_1_basic_streaming() -> Result<(), LoessError> {
     println!("{}", "-".repeat(50));
 
     for (x, y) in data_points {
-        if let Some(output) = processor.add_point(x, y)? {
+        if let Some(output) = processor.add_point(&[x], y)? {
             println!(
                 "{:8.2} {:12.2} {:12.2} {:12.4}",
                 x,
@@ -141,7 +141,7 @@ fn example_2_sensor_data_simulation() -> Result<(), LoessError> {
     println!("{}", "-".repeat(50));
 
     for (time, temp) in sensor_data {
-        if let Some(output) = processor.add_point(time, temp)? {
+        if let Some(output) = processor.add_point(&[time], temp)? {
             println!(
                 "{:6.0} {:12.2}°C {:12.2}°C {:12.3}°C",
                 time,
@@ -209,7 +209,7 @@ fn example_3_outlier_handling() -> Result<(), LoessError> {
 
     print!("  Smoothed values: [");
     for (i, (x, y)) in data_points.iter().enumerate() {
-        if let Some(output) = processor.add_point(*x, *y)? {
+        if let Some(output) = processor.add_point(&[*x], *y)? {
             if i > 0 {
                 print!(", ");
             }
@@ -231,7 +231,7 @@ fn example_3_outlier_handling() -> Result<(), LoessError> {
 
     print!("  Smoothed values: [");
     for (i, (x, y)) in data_points.iter().enumerate() {
-        if let Some(output) = processor.add_point(*x, *y)? {
+        if let Some(output) = processor.add_point(&[*x], *y)? {
             if i > 0 {
                 print!(", ");
             }
@@ -283,7 +283,7 @@ fn example_4_window_size_comparison() -> Result<(), LoessError> {
 
         let mut smoothed_values = Vec::new();
         for (x, y) in &data {
-            if let Some(output) = processor.add_point(*x, *y)? {
+            if let Some(output) = processor.add_point(&[*x], *y)? {
                 smoothed_values.push(output.smoothed);
             }
         }
@@ -339,7 +339,7 @@ fn example_5_memory_bounded_processing() -> Result<(), LoessError> {
         let x = i as f64;
         let y = 2.0 * x + (x * 0.1).sin() * 5.0 + ((i % 7) as f64 - 3.0) * 0.5;
 
-        if let Some(output) = processor.add_point(x, y)? {
+        if let Some(output) = processor.add_point(&[x], y)? {
             processed_count += 1;
             last_smoothed = output.smoothed;
 
@@ -409,7 +409,7 @@ fn example_6_sliding_window_behavior() -> Result<(), LoessError> {
     println!("{}", "-".repeat(65));
 
     for (i, (x, y)) in data.iter().enumerate() {
-        if let Some(output) = processor.add_point(*x, *y)? {
+        if let Some(output) = processor.add_point(&[*x], *y)? {
             println!(
                 "{:6} {:10.1} {:12.1} {:12.2} {:>20}",
                 i + 1,
@@ -461,7 +461,7 @@ fn example_7_benchmark() -> Result<(), LoessError> {
     println!("{}", "-".repeat(80));
 
     // Generate a larger synthetic dataset
-    let n = 10_000;
+    let n = 1_000;
     println!("Processing {} data points in online mode...", n);
 
     let start = std::time::Instant::now();
@@ -470,7 +470,7 @@ fn example_7_benchmark() -> Result<(), LoessError> {
         .fraction(0.5)
         .iterations(3)
         .adapter(Online)
-        .window_capacity(100) // 100-point sliding window
+        .window_capacity(10) // 10-point sliding window
         .build()?;
 
     let mut processed_count = 0;
@@ -480,7 +480,7 @@ fn example_7_benchmark() -> Result<(), LoessError> {
         let x = i as f64;
         let y = (x * 0.1).sin() + (x * 0.01).cos();
 
-        if processor.add_point(x, y)?.is_some() {
+        if processor.add_point(&[x], y)?.is_some() {
             processed_count += 1;
         }
     }
@@ -489,7 +489,7 @@ fn example_7_benchmark() -> Result<(), LoessError> {
 
     println!("Processed {} points in {:?}", processed_count, duration);
     println!("Execution mode: Sequential Online");
-    println!("Window capacity: 100");
+    println!("Window capacity: 10");
 
     println!();
     Ok(())

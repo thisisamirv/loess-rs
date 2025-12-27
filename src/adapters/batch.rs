@@ -44,20 +44,21 @@ use num_traits::Float;
 
 // Internal dependencies
 use crate::algorithms::interpolation::calculate_delta;
-use crate::algorithms::regression::ZeroWeightFallback;
+use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
-use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn};
-use crate::engine::executor::{LoessConfig, LoessExecutor};
+use crate::engine::executor::{
+    CVPassFn, FitPassFn, IntervalPassFn, LoessConfig, LoessExecutor, SmoothPassFn,
+};
 use crate::engine::output::LoessResult;
 use crate::engine::validator::Validator;
 use crate::evaluation::cv::CVKind;
 use crate::evaluation::diagnostics::Diagnostics;
 use crate::evaluation::intervals::IntervalMethod;
+use crate::math::boundary::BoundaryPolicy;
+use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
 use crate::primitives::backend::Backend;
 use crate::primitives::errors::LoessError;
-use crate::primitives::partition::BoundaryPolicy;
-use crate::primitives::sorting::{sort_by_x, unsort};
 
 // ============================================================================
 // Batch LOESS Builder
@@ -113,6 +114,15 @@ pub struct BatchLoessBuilder<T: Float> {
 
     /// Policy for handling data boundaries
     pub boundary_policy: BoundaryPolicy,
+
+    /// Polynomial degree for local regression
+    pub polynomial_degree: PolynomialDegree,
+
+    /// Number of predictor dimensions (default: 1).
+    pub dimensions: usize,
+
+    /// Distance metric for nD neighborhood computation.
+    pub distance_metric: DistanceMetric<T>,
 
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
@@ -172,6 +182,9 @@ impl<T: Float> BatchLoessBuilder<T> {
             return_robustness_weights: false,
             zero_weight_fallback: ZeroWeightFallback::default(),
             boundary_policy: BoundaryPolicy::default(),
+            polynomial_degree: PolynomialDegree::default(),
+            dimensions: 1,
+            distance_metric: DistanceMetric::default(),
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -352,7 +365,7 @@ impl<T: Float> BatchLoessBuilder<T> {
         if let Some(ref fracs) = self.cv_fractions {
             Validator::validate_cv_fractions(fracs)?;
         }
-        if let Some(crate::evaluation::cv::CVKind::KFold(k)) = self.cv_kind {
+        if let Some(CVKind::KFold(k)) = self.cv_kind {
             Validator::validate_kfold(k)?;
         }
 
@@ -377,11 +390,10 @@ pub struct BatchLoess<T: Float> {
 impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
     /// Perform LOESS smoothing on the provided data.
     pub fn fit(self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
-        Validator::validate_inputs(x, y)?;
+        Validator::validate_inputs(x, y, self.config.dimensions)?;
 
-        // Sort data by x using sorting module
-        let sorted = sort_by_x(x, y);
-        let delta = calculate_delta(self.config.delta, &sorted.x)?;
+        // KD-Tree handles unsorted data natively - no need to sort
+        let delta = calculate_delta(self.config.delta, x)?;
 
         let zw_flag: u8 = self.config.zero_weight_fallback.to_u8();
 
@@ -398,6 +410,9 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
             auto_convergence: self.config.auto_convergence,
             return_variance: self.config.interval_type,
             boundary_policy: self.config.boundary_policy,
+            polynomial_degree: self.config.polynomial_degree,
+            dimensions: self.config.dimensions,
+            distance_metric: self.config.distance_metric.clone(),
             cv_seed: self.config.cv_seed,
             // ++++++++++++++++++++++++++++++++++++++
             // +               DEV                  +
@@ -410,8 +425,8 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
             backend: self.config.backend,
         };
 
-        // Execute unified LOESS
-        let result = LoessExecutor::run_with_config(&sorted.x, &sorted.y, config);
+        // Execute unified LOESS (KD-Tree handles unsorted data)
+        let result = LoessExecutor::run_with_config(x, y, config);
 
         let y_smooth = result.smoothed;
         let std_errors = result.std_errors;
@@ -419,9 +434,8 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
         let fraction_used = result.used_fraction;
         let cv_scores = result.cv_scores;
 
-        // Calculate residuals
-        let residuals: Vec<T> = sorted
-            .y
+        // Calculate residuals (data is in original order, no unsorting needed)
+        let residuals: Vec<T> = y
             .iter()
             .zip(y_smooth.iter())
             .map(|(&orig, &smoothed_val)| orig - smoothed_val)
@@ -437,7 +451,7 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
         // Compute diagnostic statistics if requested
         let diagnostics = if self.config.return_diagnostics {
             Some(Diagnostics::compute(
-                &sorted.y,
+                y,
                 &y_smooth,
                 &residuals,
                 std_errors.as_deref(),
@@ -458,33 +472,29 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
                 (None, None, None, None)
             };
 
-        // Unsort results using sorting module
-        let indices = &sorted.indices;
-        let y_smooth_out = unsort(&y_smooth, indices);
-        let std_errors_out = std_errors.as_ref().map(|se| unsort(se, indices));
+        // Results are already in original order (no sorting/unsorting needed with KD-Tree)
         let residuals_out = if self.config.compute_residuals {
-            Some(unsort(&residuals, indices))
+            Some(residuals)
         } else {
             None
         };
         let rob_weights_out = if self.config.return_robustness_weights {
-            Some(unsort(&rob_weights, indices))
+            Some(rob_weights)
         } else {
             None
         };
-        let cl_out = conf_lower.as_ref().map(|v| unsort(v, indices));
-        let cu_out = conf_upper.as_ref().map(|v| unsort(v, indices));
-        let pl_out = pred_lower.as_ref().map(|v| unsort(v, indices));
-        let pu_out = pred_upper.as_ref().map(|v| unsort(v, indices));
 
         Ok(LoessResult {
             x: x.to_vec(),
-            y: y_smooth_out,
-            standard_errors: std_errors_out,
-            confidence_lower: cl_out,
-            confidence_upper: cu_out,
-            prediction_lower: pl_out,
-            prediction_upper: pu_out,
+            dimensions: self.config.dimensions,
+            distance_metric: self.config.distance_metric.clone(),
+            polynomial_degree: self.config.polynomial_degree,
+            y: y_smooth,
+            standard_errors: std_errors,
+            confidence_lower: conf_lower,
+            confidence_upper: conf_upper,
+            prediction_lower: pred_lower,
+            prediction_upper: pred_upper,
             residuals: residuals_out,
             robustness_weights: rob_weights_out,
             fraction_used,

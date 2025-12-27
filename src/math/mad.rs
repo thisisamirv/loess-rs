@@ -27,7 +27,7 @@
 //! * This module does not handle non-finite values (NaN/Inf).
 
 // External dependencies
-use core::cmp::Ordering;
+use core::cmp::Ordering::Equal;
 use num_traits::Float;
 
 // ============================================================================
@@ -76,7 +76,7 @@ fn median_inplace<T: Float>(vals: &mut [T]) -> T {
 
     if n % 2 == 0 {
         // Even length: average of two middle values
-        vals.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        vals.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(Equal));
         let upper = vals[mid];
 
         // Find the largest value in the lower half
@@ -85,7 +85,7 @@ fn median_inplace<T: Float>(vals: &mut [T]) -> T {
         (lower + upper) / T::from(2.0).unwrap()
     } else {
         // Odd length: middle value
-        vals.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        vals.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(Equal));
         vals[mid]
     }
 }

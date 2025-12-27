@@ -18,6 +18,12 @@
 //! * Separates concerns: fitting, interpolation, robustness, convergence.
 //! * Generic over `Float` types to support f32 and f64.
 //!
+//! ## Key concepts
+//!
+//! * **Execution Loop**: The central iteration cycle (Fit -> Residuals -> Weights -> Repeat).
+//! * **Auto-convergence**: Dynamically stopping iterations when parameters stabilize.
+//! * **Delta Optimization**: Skipping expensive re-fitting for nearby points.
+//!
 //! ## Invariants
 //!
 //! * Input x-values are assumed to be monotonically increasing (sorted).
@@ -31,11 +37,8 @@
 //! * This module does not validate input data (handled by `validator`).
 //! * This module does not sort input data (caller's responsibility).
 //! * This module does not provide public-facing result formatting.
-//! * This module does not handle parallel execution directly (handled by adapters).
 
 // Feature-gated imports
-#[cfg(not(feature = "std"))]
-use alloc::vec;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
@@ -44,23 +47,56 @@ use std::vec;
 use std::vec::Vec;
 
 // External dependencies
+use core::cmp::Ordering::Equal;
 use core::fmt::Debug;
-use core::mem::swap;
 use num_traits::Float;
 
 // Internal dependencies
-use crate::algorithms::interpolation::interpolate_gap;
-use crate::algorithms::regression::{
-    GLSModel, LinearRegression, Regression, RegressionContext, ZeroWeightFallback,
-};
+use crate::algorithms::regression::{PolynomialDegree, RegressionContext, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::evaluation::cv::CVKind;
 use crate::evaluation::intervals::IntervalMethod;
-use crate::math::boundary::apply_boundary_policy;
+use crate::math::boundary::BoundaryPolicy;
+use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
+use crate::math::neighborhood::{KDTree, Neighborhood, PointDistance};
 use crate::primitives::backend::Backend;
-use crate::primitives::partition::BoundaryPolicy;
 use crate::primitives::window::Window;
+
+/// Standard LOESS distance calculator.
+///
+/// Implements `PointDistance` using either Euclidean or Normalized Euclidean metrics.
+pub struct LoessDistanceCalculator<'a, T: Float> {
+    /// The distance metric to use (Euclidean or Normalized).
+    pub metric: DistanceMetric<T>,
+    /// Normalization scales for each dimension (used if metric is Normalized).
+    pub scales: &'a [T],
+}
+
+impl<'a, T: Float> PointDistance<T> for LoessDistanceCalculator<'a, T> {
+    fn distance(&self, a: &[T], b: &[T]) -> T {
+        match &self.metric {
+            DistanceMetric::Normalized => DistanceMetric::normalized(a, b, self.scales),
+            DistanceMetric::Euclidean => DistanceMetric::euclidean(a, b),
+            DistanceMetric::Manhattan => DistanceMetric::manhattan(a, b),
+            DistanceMetric::Chebyshev => DistanceMetric::chebyshev(a, b),
+            DistanceMetric::Minkowski(p) => DistanceMetric::minkowski(a, b, *p),
+            DistanceMetric::Weighted(w) => DistanceMetric::weighted(a, b, w),
+        }
+    }
+
+    fn split_distance(&self, dim: usize, split_val: T, query_val: T) -> T {
+        let diff = (query_val - split_val).abs();
+        match &self.metric {
+            DistanceMetric::Normalized => diff * self.scales[dim],
+            DistanceMetric::Euclidean => diff,
+            DistanceMetric::Manhattan => diff,
+            DistanceMetric::Chebyshev => diff,
+            DistanceMetric::Minkowski(_) => diff,
+            DistanceMetric::Weighted(w) => diff * w[dim].sqrt(),
+        }
+    }
+}
 
 // ============================================================================
 // Type Definitions
@@ -114,42 +150,6 @@ pub type FitPassFn<T> = fn(
     usize,          // iterations
     Vec<T>,         // robustness_weights
 );
-
-/// Working buffers for LOESS iteration.
-#[doc(hidden)]
-pub struct IterationBuffers<T> {
-    /// Current smoothed values
-    pub y_smooth: Vec<T>,
-
-    /// Previous iteration values (for convergence check)
-    pub y_prev: Vec<T>,
-
-    /// Robustness weights
-    pub robustness_weights: Vec<T>,
-
-    /// Residuals buffer
-    pub residuals: Vec<T>,
-
-    /// Kernel weights scratch buffer
-    pub weights: Vec<T>,
-}
-
-impl<T: Float> IterationBuffers<T> {
-    /// Allocate all working buffers for LOESS iteration.
-    pub fn allocate(n: usize, use_convergence: bool) -> Self {
-        Self {
-            y_smooth: vec![T::zero(); n],
-            y_prev: if use_convergence {
-                vec![T::zero(); n]
-            } else {
-                Vec::new()
-            },
-            robustness_weights: vec![T::one(); n],
-            residuals: vec![T::zero(); n],
-            weights: vec![T::zero(); n],
-        }
-    }
-}
 
 /// Output from LOESS execution.
 #[derive(Debug, Clone)]
@@ -217,6 +217,15 @@ pub struct LoessConfig<T> {
     /// Boundary handling policy.
     pub boundary_policy: BoundaryPolicy,
 
+    /// Polynomial degree for local regression (0=constant, 1=linear, 2=quadratic).
+    pub polynomial_degree: PolynomialDegree,
+
+    /// Number of predictor dimensions (default: 1).
+    pub dimensions: usize,
+
+    /// Distance metric for nD neighborhood computation.
+    pub distance_metric: DistanceMetric<T>,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -245,7 +254,7 @@ pub struct LoessConfig<T> {
     pub parallel: bool,
 }
 
-impl<T: Float> Default for LoessConfig<T> {
+impl<T: Float + Debug + Send + Sync + 'static> Default for LoessConfig<T> {
     fn default() -> Self {
         Self {
             fraction: None,
@@ -260,6 +269,9 @@ impl<T: Float> Default for LoessConfig<T> {
             auto_convergence: None,
             return_variance: None,
             boundary_policy: BoundaryPolicy::default(),
+            polynomial_degree: PolynomialDegree::default(),
+            dimensions: 1,
+            distance_metric: DistanceMetric::default(),
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -294,6 +306,15 @@ pub struct LoessExecutor<T: Float> {
     /// Boundary handling policy.
     pub boundary_policy: BoundaryPolicy,
 
+    /// Polynomial degree for local regression.
+    pub polynomial_degree: PolynomialDegree,
+
+    /// Number of predictor dimensions.
+    pub dimensions: usize,
+
+    /// Distance metric for nD neighborhood computation.
+    pub distance_metric: DistanceMetric<T>,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -322,13 +343,13 @@ pub struct LoessExecutor<T: Float> {
     pub parallel: bool,
 }
 
-impl<T: Float> Default for LoessExecutor<T> {
+impl<T: Float + Debug + Send + Sync + 'static> Default for LoessExecutor<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float> LoessExecutor<T> {
+impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
     // ========================================================================
     // Constructor and Builder Methods
     // ========================================================================
@@ -343,6 +364,9 @@ impl<T: Float> LoessExecutor<T> {
             zero_weight_fallback: 0,
             robustness_method: RobustnessMethod::Bisquare,
             boundary_policy: BoundaryPolicy::default(),
+            polynomial_degree: PolynomialDegree::default(),
+            dimensions: 1,
+            distance_metric: DistanceMetric::default(),
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -363,6 +387,9 @@ impl<T: Float> LoessExecutor<T> {
             .zero_weight_fallback(config.zero_weight_fallback)
             .robustness_method(config.robustness_method)
             .boundary_policy(config.boundary_policy)
+            .polynomial_degree(config.polynomial_degree)
+            .dimensions(config.dimensions)
+            .distance_metric(config.distance_metric.clone())
             // ++++++++++++++++++++++++++++++++++++++
             // +               DEV                  +
             // ++++++++++++++++++++++++++++++++++++++
@@ -372,39 +399,6 @@ impl<T: Float> LoessExecutor<T> {
             .custom_fit_pass(config.custom_fit_pass)
             .parallel(config.parallel)
             .backend(config.backend)
-    }
-
-    /// Convert executor settings back to a `LoessConfig`.
-    #[doc(hidden)]
-    pub fn to_config(
-        &self,
-        fraction: Option<T>,
-        tolerance: Option<T>,
-        interval_method: Option<&IntervalMethod<T>>,
-    ) -> LoessConfig<T> {
-        LoessConfig {
-            fraction: fraction.or(Some(self.fraction)),
-            iterations: self.iterations,
-            delta: self.delta,
-            weight_function: self.weight_function,
-            zero_weight_fallback: self.zero_weight_fallback,
-            robustness_method: self.robustness_method,
-            cv_fractions: None,
-            cv_kind: None,
-            cv_seed: None,
-            auto_convergence: tolerance,
-            return_variance: interval_method.cloned(),
-            boundary_policy: self.boundary_policy,
-            // ++++++++++++++++++++++++++++++++++++++
-            // +               DEV                  +
-            // ++++++++++++++++++++++++++++++++++++++
-            custom_smooth_pass: self.custom_smooth_pass,
-            custom_cv_pass: self.custom_cv_pass,
-            custom_interval_pass: self.custom_interval_pass,
-            custom_fit_pass: self.custom_fit_pass,
-            parallel: self.parallel,
-            backend: self.backend,
-        }
     }
 
     /// Set the smoothing fraction (bandwidth).
@@ -446,6 +440,24 @@ impl<T: Float> LoessExecutor<T> {
     /// Set the boundary handling policy.
     pub fn boundary_policy(mut self, policy: BoundaryPolicy) -> Self {
         self.boundary_policy = policy;
+        self
+    }
+
+    /// Set the polynomial degree for local regression.
+    pub fn polynomial_degree(mut self, degree: PolynomialDegree) -> Self {
+        self.polynomial_degree = degree;
+        self
+    }
+
+    /// Set the number of predictor dimensions.
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        self.dimensions = dims;
+        self
+    }
+
+    /// Set the distance metric for nD neighborhood computation.
+    pub fn distance_metric(mut self, metric: DistanceMetric<T>) -> Self {
+        self.distance_metric = metric;
         self
     }
 
@@ -509,14 +521,43 @@ impl<T: Float> LoessExecutor<T> {
         // Handle cross-validation if configured
         if let Some(ref cv_fracs) = config.cv_fractions {
             let cv_kind = config.cv_kind.unwrap_or(CVKind::KFold(5));
+            let dims = executor.dimensions;
 
             // Run CV to find best fraction
             let (best_frac, scores) = if let Some(callback) = config.custom_cv_pass {
                 callback(x, y, cv_fracs, cv_kind, &config)
             } else {
-                cv_kind.run(x, y, cv_fracs, config.cv_seed, |tx, ty, f| {
-                    executor.run(tx, ty, Some(f), None, None, None).smoothed
-                })
+                let predictor = if dims > 1 {
+                    Some(|train_x: &[T], train_y: &[T], test_x: &[T], f: T| {
+                        let n_train = train_y.len();
+                        let window_size = Window::calculate_span(n_train, f);
+                        let (mins, maxs) = DistanceMetric::compute_ranges(train_x, dims);
+                        let scales = DistanceMetric::compute_normalization_scales(&mins, &maxs);
+                        let kdtree = KDTree::new(train_x, dims);
+
+                        executor.predict_nd(
+                            train_x,
+                            train_y,
+                            &vec![T::one(); n_train],
+                            test_x,
+                            window_size,
+                            &scales,
+                            Some(&kdtree),
+                        )
+                    })
+                } else {
+                    None
+                };
+
+                cv_kind.run(
+                    x,
+                    y,
+                    dims,
+                    cv_fracs,
+                    config.cv_seed,
+                    |tx, ty, f| executor.run(tx, ty, Some(f), None, None, None).smoothed,
+                    predictor,
+                )
             };
 
             // Run final pass with best fraction
@@ -558,523 +599,323 @@ impl<T: Float> LoessExecutor<T> {
         max_iter: Option<usize>,
         tolerance: Option<T>,
         confidence_method: Option<&IntervalMethod<T>>,
-    ) -> ExecutorOutput<T>
-    where
-        T: Float + Debug + Send + Sync + 'static,
-    {
-        let n = x.len();
+    ) -> ExecutorOutput<T> {
+        let dims = self.dimensions;
+        let n = x.len() / dims;
         let eff_fraction = fraction.unwrap_or(self.fraction);
 
-        // Handle global regression (fraction >= 1.0)
-        if eff_fraction >= T::one() {
-            let smoothed = GLSModel::global_ols(x, y);
-            return ExecutorOutput {
-                smoothed,
-                std_errors: if confidence_method.is_some() {
-                    Some(vec![T::zero(); n])
-                } else {
-                    None
-                },
-                iterations: None,
-                used_fraction: eff_fraction,
-                cv_scores: None,
-                robustness_weights: vec![T::one(); n],
-            };
-        }
-
-        // Calculate window size and prepare fitter
+        // Calculate window size
         let window_size = Window::calculate_span(n, eff_fraction);
-        let fitter = LinearRegression;
         let target_iterations = max_iter.unwrap_or(self.iterations);
 
-        // Handle boundary padding
-        let (x_in, y_in, pad_len) = if self.boundary_policy != BoundaryPolicy::Extend {
-            let (px, py) = apply_boundary_policy(x, y, window_size, self.boundary_policy);
-            let pad = (px.len() - x.len()) / 2;
-            (px, py, pad)
-        } else {
-            (x.to_vec(), y.to_vec(), 0)
+        // Apply boundary policy (unified)
+        let (ax, ay, mapping) = self.boundary_policy.apply(x, y, dims, window_size);
+        let n_total = ay.len();
+        let is_augmented = n_total > n;
+
+        // Compute normalization scales using the full (augmented) range
+        let mut mins = vec![T::zero(); dims];
+        let mut maxs = vec![T::zero(); dims];
+        // Initialize mins/maxs with first point
+        mins[..dims].copy_from_slice(&ax[..dims]);
+        maxs[..dims].copy_from_slice(&ax[..dims]);
+        for i in 1..n_total {
+            for d in 0..dims {
+                let val = ax[i * dims + d];
+                if val < mins[d] {
+                    mins[d] = val;
+                }
+                if val > maxs[d] {
+                    maxs[d] = val;
+                }
+            }
+        }
+
+        let mut scales = vec![T::one(); dims];
+        for d in 0..dims {
+            let range = maxs[d] - mins[d];
+            if range > T::zero() {
+                scales[d] = T::one() / range;
+            }
+        }
+
+        // Build KD-Tree for efficient kNN
+        let kdtree = KDTree::new(&ax, dims);
+
+        // Define distance calculator
+        let dist_calc = LoessDistanceCalculator {
+            metric: self.distance_metric.clone(),
+            scales: &scales,
         };
 
-        let x_ref = &x_in;
-        let y_ref = &y_in;
+        // The neighbor indices don't change across iterations (only weights do),
+        // so we compute them once and reuse across all smoothing passes.
+        let precomputed_neighbors: Vec<Neighborhood<T>> = (0..n)
+            .map(|i| {
+                let query_offset = i * dims;
+                let query_point = &ax[query_offset..query_offset + dims];
+                kdtree.find_k_nearest(query_point, window_size, &dist_calc, None)
+            })
+            .collect();
 
-        // Run the iteration loop
-        let (mut smoothed, mut std_errors, iterations, mut robustness_weights) = self
-            .iteration_loop_with_callback(
-                x_ref,
-                y_ref,
-                eff_fraction,
+        let mut y_smooth = vec![T::zero(); n];
+        let mut robustness_weights = vec![T::one(); n];
+        let mut augmented_robustness_weights = vec![T::one(); n_total];
+        let mut residuals = vec![T::zero(); n];
+
+        let mut iterations_performed = 0;
+
+        for iter in 0..=target_iterations {
+            iterations_performed = iter;
+
+            // Sync robustness weights to augmented points
+            if is_augmented {
+                for (i, &orig_idx) in mapping.iter().enumerate() {
+                    augmented_robustness_weights[i] = robustness_weights[orig_idx];
+                }
+            }
+
+            // Perform smoothing pass using precomputed neighbors
+            self.smooth_pass_nd(
+                &ax,
+                &ay,
                 window_size,
-                target_iterations,
-                self.delta,
-                self.weight_function,
-                self.zero_weight_fallback,
-                &fitter,
-                &self.robustness_method,
-                confidence_method,
-                tolerance,
-                self.custom_smooth_pass,
-                self.custom_interval_pass,
+                if is_augmented {
+                    &augmented_robustness_weights
+                } else {
+                    &robustness_weights
+                },
+                iter > 0,
+                &scales,
+                &mut y_smooth,
+                None, // Compute leverage only in final pass
+                n,    // Only smooth the original points
+                Some(&kdtree),
+                Some(&precomputed_neighbors),
             );
 
-        // Slice back to original range if padded
-        if pad_len > 0 {
-            Self::slice_results(
+            if iter < target_iterations {
+                // Update robustness weights
+                for i in 0..n {
+                    residuals[i] = (y[i] - y_smooth[i]).abs();
+                }
+
+                let mut sorted_residuals = residuals.clone();
+                sorted_residuals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Equal));
+                let median_residual = sorted_residuals[n / 2];
+                let mad = median_residual; // Simple MAD approximation
+
+                if mad <= T::epsilon() {
+                    break;
+                }
+
+                let tolerance_val = tolerance.unwrap_or_else(|| T::from(1e-6).unwrap());
+                let mut max_change = T::zero();
+
+                for i in 0..n {
+                    let old_w = robustness_weights[i];
+                    let r = residuals[i] / (T::from(6.0).unwrap() * mad);
+                    let new_w = if r < T::one() {
+                        let tmp = T::one() - r * r;
+                        tmp * tmp
+                    } else {
+                        T::zero()
+                    };
+                    robustness_weights[i] = new_w;
+
+                    let change = (new_w - old_w).abs();
+                    if change > max_change {
+                        max_change = change;
+                    }
+                }
+
+                if max_change < tolerance_val {
+                    break;
+                }
+            }
+        }
+
+        let mut se = None;
+        if let Some(_method) = confidence_method {
+            let mut leverages = vec![T::zero(); n];
+
+            // Final pass for leverages and smooth values
+            self.smooth_pass_nd(
+                &ax,
+                &ay,
+                window_size,
+                if is_augmented {
+                    &augmented_robustness_weights
+                } else {
+                    &robustness_weights
+                },
+                target_iterations > 0,
+                &scales,
+                &mut y_smooth,
+                Some(&mut leverages),
                 n,
-                pad_len,
-                &mut smoothed,
-                &mut std_errors,
-                &mut robustness_weights,
+                Some(&kdtree),
+                Some(&precomputed_neighbors),
             );
+
+            // Estimate residual standard deviation (sigma) robustly
+            for i in 0..n {
+                residuals[i] = (y[i] - y_smooth[i]).abs();
+            }
+            let mut sorted_residuals = residuals.clone();
+            sorted_residuals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Equal));
+            let median_residual = sorted_residuals[n / 2];
+            let sigma = median_residual * T::from(1.4826).unwrap();
+
+            let mut se_vec = vec![T::zero(); n];
+            for i in 0..n {
+                se_vec[i] = sigma * leverages[i].sqrt();
+            }
+            se = Some(se_vec);
         }
 
         ExecutorOutput {
-            smoothed,
-            std_errors,
-            iterations: if tolerance.is_some() {
-                Some(iterations)
-            } else {
-                None
-            },
+            smoothed: y_smooth,
+            std_errors: se,
+            iterations: Some(iterations_performed),
             used_fraction: eff_fraction,
             cv_scores: None,
             robustness_weights,
         }
     }
 
-    /// Perform the full LOESS iteration loop.
-    #[allow(clippy::too_many_arguments)]
-    pub fn iteration_loop_with_callback<Fitter>(
-        &self,
-        x: &[T],
-        y: &[T],
-        eff_fraction: T,
-        window_size: usize,
-        niter: usize,
-        delta: T,
-        weight_function: WeightFunction,
-        zero_weight_flag: u8,
-        fitter: &Fitter,
-        robustness_updater: &RobustnessMethod,
-        interval_method: Option<&IntervalMethod<T>>,
-        convergence_tolerance: Option<T>,
-        smooth_pass_fn: Option<SmoothPassFn<T>>,
-        interval_pass_fn: Option<IntervalPassFn<T>>,
-    ) -> (Vec<T>, Option<Vec<T>>, usize, Vec<T>)
-    where
-        Fitter: Regression<T> + ?Sized,
-        T: Float + Debug + Send + Sync + 'static,
-    {
-        if self.custom_fit_pass.is_some() {
-            let config = self.to_config(Some(eff_fraction), convergence_tolerance, interval_method);
-            return (self.custom_fit_pass.unwrap())(x, y, &config);
-        }
-
-        let n = x.len();
-        let mut buffers = IterationBuffers::allocate(n, convergence_tolerance.is_some());
-        let mut iterations_performed = 0;
-
-        // Copy initial y values to y_smooth
-        buffers.y_smooth.copy_from_slice(y);
-
-        // Smoothing iterations with robustness updates
-        for iter in 0..=niter {
-            iterations_performed = iter;
-
-            // Swap buffers if checking convergence (save previous state)
-            if convergence_tolerance.is_some() && iter > 0 {
-                swap(&mut buffers.y_smooth, &mut buffers.y_prev);
-            }
-
-            // Perform smoothing pass
-            if let Some(callback) = smooth_pass_fn {
-                callback(
-                    x,
-                    y,
-                    window_size,
-                    delta,
-                    iter > 0, // use_robustness
-                    &buffers.robustness_weights,
-                    &mut buffers.y_smooth,
-                    weight_function,
-                    zero_weight_flag,
-                );
-            } else {
-                Self::smooth_pass(
-                    x,
-                    y,
-                    window_size,
-                    delta,
-                    iter > 0, // use_robustness
-                    &buffers.robustness_weights,
-                    &mut buffers.y_smooth,
-                    weight_function,
-                    &mut buffers.weights,
-                    zero_weight_flag,
-                    fitter,
-                );
-            }
-
-            // Check convergence if tolerance is provided (skip on first iteration)
-            if let Some(tol) = convergence_tolerance {
-                if iter > 0 && Self::check_convergence(&buffers.y_smooth, &buffers.y_prev, tol) {
-                    break;
-                }
-            }
-
-            // Update robustness weights for next iteration (skip last)
-            if iter < niter {
-                Self::update_robustness_weights(
-                    y,
-                    &buffers.y_smooth,
-                    &mut buffers.residuals,
-                    &mut buffers.robustness_weights,
-                    robustness_updater,
-                    &mut buffers.weights,
-                );
-            }
-        }
-
-        // Compute standard errors if requested
-        let std_errors = interval_method.map(|im| {
-            Self::compute_std_errors(
-                x,
-                y,
-                &buffers.y_smooth,
-                window_size,
-                &buffers.robustness_weights,
-                weight_function,
-                im,
-                interval_pass_fn,
-            )
-        });
-
-        (
-            buffers.y_smooth,
-            std_errors,
-            iterations_performed,
-            buffers.robustness_weights,
-        )
-    }
-
     // ========================================================================
     // Main Algorithmic Logic
     // ========================================================================
 
-    /// Perform a single smoothing pass over all points.
+    /// Predict values at arbitrary points using the provided training data.
+    ///
+    /// This is used for out-of-sample prediction, specifically during cross-validation.
     #[allow(clippy::too_many_arguments)]
-    pub fn smooth_pass<Fitter>(
-        x: &[T],
-        y: &[T],
-        window_size: usize,
-        delta: T,
-        use_robustness: bool,
+    pub fn predict_nd(
+        &self,
+        x_train: &[T],
+        y_train: &[T],
         robustness_weights: &[T],
-        y_smooth: &mut [T],
-        weight_function: WeightFunction,
-        weights: &mut [T],
-        zero_weight_flag: u8,
-        fitter: &Fitter,
-    ) where
-        Fitter: Regression<T> + ?Sized,
-    {
-        let zero_weight_fallback = ZeroWeightFallback::from_u8(zero_weight_flag);
-
-        // Fit first point
-        let window = Self::fit_first_point(
-            x,
-            y,
-            window_size,
-            use_robustness,
-            robustness_weights,
-            weights,
-            weight_function,
-            zero_weight_fallback,
-            fitter,
-            y_smooth,
-        );
-
-        // Fit remaining points with interpolation
-        Self::fit_and_interpolate_remaining(
-            x,
-            y,
-            delta,
-            use_robustness,
-            robustness_weights,
-            weights,
-            weight_function,
-            zero_weight_fallback,
-            fitter,
-            y_smooth,
-            window,
-        );
-    }
-
-    /// Compute standard errors for smoothed values.
-    #[allow(clippy::too_many_arguments)]
-    pub fn compute_std_errors(
-        x: &[T],
-        y: &[T],
-        y_smooth: &[T],
+        x_query: &[T],
         window_size: usize,
-        robustness_weights: &[T],
-        weight_function: WeightFunction,
-        interval_method: &IntervalMethod<T>,
-        interval_pass_fn: Option<IntervalPassFn<T>>,
-    ) -> Vec<T> {
-        if let Some(callback) = interval_pass_fn {
-            return callback(
-                x,
-                y,
-                y_smooth,
-                window_size,
-                robustness_weights,
-                weight_function,
-                interval_method,
-            );
-        }
-
-        let n = x.len();
-        let mut se = vec![T::zero(); n];
-        interval_method.compute_window_se(
-            x,
-            y,
-            y_smooth,
-            window_size,
-            robustness_weights,
-            &mut se,
-            &|t| weight_function.compute_weight(t),
-        );
-        se
-    }
-
-    // ========================================================================
-    // Helpers
-    // ========================================================================
-
-    /// Check convergence between current and previous smoothed values.
-    pub fn check_convergence(y_smooth: &[T], y_prev: &[T], tolerance: T) -> bool {
-        let max_change = y_smooth
-            .iter()
-            .zip(y_prev.iter())
-            .fold(T::zero(), |maxv, (&current, &previous)| {
-                T::max(maxv, (current - previous).abs())
-            });
-
-        max_change <= tolerance
-    }
-
-    /// Update robustness weights based on residuals.
-    pub fn update_robustness_weights(
-        y: &[T],
-        y_smooth: &[T],
-        residuals: &mut [T],
-        robustness_weights: &mut [T],
-        robustness_updater: &RobustnessMethod,
-        scratch: &mut [T],
-    ) {
-        // Inline compute_residuals: residuals[i] = y[i] - y_smooth[i]
-        for i in 0..y.len() {
-            residuals[i] = y[i] - y_smooth[i];
-        }
-        robustness_updater.apply_robustness_weights(residuals, robustness_weights, scratch);
-    }
-
-    /// Helper to slice result buffers back to original data length when padding was used.
-    fn slice_results(
-        n: usize,
-        pad_len: usize,
-        smoothed: &mut Vec<T>,
-        std_errors: &mut Option<Vec<T>>,
-        robustness_weights: &mut Vec<T>,
-    ) {
-        smoothed.drain(0..pad_len);
-        smoothed.truncate(n);
-
-        if let Some(se) = std_errors.as_mut() {
-            se.drain(0..pad_len);
-            se.truncate(n);
-        }
-
-        robustness_weights.drain(0..pad_len);
-        robustness_weights.truncate(n);
-    }
-
-    // ========================================================================
-    // Specialized Fitting Functions
-    // ========================================================================
-
-    /// Fit the first point and initialize the smoothing window.
-    #[allow(clippy::too_many_arguments)]
-    pub fn fit_single_point<Fitter>(
-        x: &[T],
-        y: &[T],
-        idx: usize,
-        window_size: usize,
-        use_robustness: bool,
-        robustness_weights: &[T],
-        weights: &mut [T],
-        weight_function: WeightFunction,
-        zero_weight_fallback: ZeroWeightFallback,
-        fitter: &Fitter,
-    ) -> (T, Window)
+        scales: &[T],
+        kdtree: Option<&KDTree<T>>,
+    ) -> Vec<T>
     where
-        Fitter: Regression<T> + ?Sized,
+        T: Float + Debug + Send + Sync + 'static,
     {
-        let n = x.len();
-        let mut window = Window::initialize(idx, window_size, n);
-        window.recenter(x, idx, n);
+        let dims = self.dimensions;
+        let n_query = x_query.len() / dims;
+        let mut y_pred = vec![T::zero(); n_query];
 
-        let ctx = RegressionContext {
-            x,
-            y,
-            idx,
-            window,
-            use_robustness,
-            robustness_weights,
-            weights,
-            weight_function,
-            zero_weight_fallback,
+        let dist_calc = LoessDistanceCalculator {
+            metric: self.distance_metric.clone(),
+            scales,
         };
 
-        (fitter.fit(ctx).unwrap_or_else(|| y[idx]), window)
+        for (i, pred) in y_pred.iter_mut().enumerate() {
+            let query_offset = i * dims;
+            let query_point = &x_query[query_offset..query_offset + dims];
+
+            // Find neighbors in training data (KD-tree is always available)
+            let neighborhood = kdtree
+                .expect("KD-tree must be provided for prediction")
+                .find_k_nearest(query_point, window_size, &dist_calc, None);
+
+            // Fit local polynomial
+            let context = RegressionContext {
+                x: x_train,
+                dimensions: dims,
+                y: y_train,
+                query_idx: 0,
+                query_point: Some(query_point),
+                neighborhood: &neighborhood,
+                use_robustness: true,
+                robustness_weights,
+                weight_function: self.weight_function,
+                zero_weight_fallback: ZeroWeightFallback::default(), // CV fallback
+                polynomial_degree: self.polynomial_degree,
+                compute_leverage: false,
+            };
+
+            if let Some((val, _)) = context.fit() {
+                *pred = val;
+            } else {
+                // If fitting fails, fallback to something or zero
+                // For CV, zero is better than crashing, but we could try to find a global mean
+                *pred = T::zero();
+            }
+        }
+        y_pred
     }
 
-    /// Fit the first point and initialize the smoothing window.
+    /// Perform a single smoothing pass over all nD points.
     #[allow(clippy::too_many_arguments)]
-    pub fn fit_first_point<Fitter>(
+    fn smooth_pass_nd(
+        &self,
         x: &[T],
         y: &[T],
         window_size: usize,
-        use_robustness: bool,
         robustness_weights: &[T],
-        weights: &mut [T],
-        weight_function: WeightFunction,
-        zero_weight_fallback: ZeroWeightFallback,
-        fitter: &Fitter,
-        y_smooth: &mut [T],
-    ) -> Window
-    where
-        Fitter: Regression<T> + ?Sized,
-    {
-        let (val, window) = Self::fit_single_point(
-            x,
-            y,
-            0,
-            window_size,
-            use_robustness,
-            robustness_weights,
-            weights,
-            weight_function,
-            zero_weight_fallback,
-            fitter,
-        );
-        y_smooth[0] = val;
-        window
-    }
-
-    /// Main fitting loop: iterate through remaining points with delta-skipping
-    /// and linear interpolation.
-    /// Uses binary search (partition_point) instead of linear scan to find
-    /// the next anchor point. This reduces the overhead from O(n) to O(log n)
-    /// per anchor, providing significant speedup when delta is large.
-    #[allow(clippy::too_many_arguments)]
-    fn fit_and_interpolate_remaining<Fitter>(
-        x: &[T],
-        y: &[T],
-        delta: T,
         use_robustness: bool,
-        robustness_weights: &[T],
-        weights: &mut [T],
-        weight_function: WeightFunction,
-        zero_weight_fallback: ZeroWeightFallback,
-        fitter: &Fitter,
+        scales: &[T],
         y_smooth: &mut [T],
-        mut window: Window,
+        mut leverages: Option<&mut [T]>,
+        original_n: usize,
+        kdtree: Option<&KDTree<T>>,
+        precomputed_neighbors: Option<&[Neighborhood<T>]>,
     ) where
-        Fitter: Regression<T> + ?Sized,
+        T: Float + Debug + Send + Sync + 'static,
     {
-        let n = x.len();
-        let mut last_fitted = 0usize;
+        let dims = self.dimensions;
 
-        // Main loop: fit anchor points and interpolate between them
-        while last_fitted < n - 1 {
-            let cutpoint = x[last_fitted] + delta;
+        let dist_calc = LoessDistanceCalculator {
+            metric: self.distance_metric.clone(),
+            scales,
+        };
 
-            // Binary search to find the first index where x > cutpoint
-            // This is O(log n) instead of O(n) linear scan
-            let next_idx =
-                x[last_fitted + 1..].partition_point(|&xi| xi <= cutpoint) + last_fitted + 1;
+        for i in 0..original_n {
+            // Helper to perform fit with a neighborhood reference
+            let do_fit = |neighborhood: &Neighborhood<T>| {
+                let context = RegressionContext {
+                    x,
+                    dimensions: dims,
+                    y,
+                    query_idx: i,
+                    query_point: None,
+                    neighborhood,
+                    use_robustness,
+                    robustness_weights,
+                    weight_function: self.weight_function,
+                    zero_weight_fallback: ZeroWeightFallback::from_u8(self.zero_weight_fallback),
+                    polynomial_degree: self.polynomial_degree,
+                    compute_leverage: leverages.is_some(),
+                };
+                context.fit()
+            };
 
-            // Handle tied x-values: copy fitted value to all points with same x
-            // Check the range [last_fitted+1, next_idx) for ties with last_fitted
-            let mut tie_end = last_fitted;
-            let x_last = x[last_fitted];
-            for i in (last_fitted + 1)..next_idx.min(n) {
-                if x[i] == x_last {
-                    y_smooth[i] = y_smooth[last_fitted];
-                    tie_end = i;
-                } else {
-                    break; // x is sorted, so no more ties
+            // Use precomputed neighbors (zero-copy) or query KD-Tree (owned)
+            let result = if let Some(neighbors) = precomputed_neighbors {
+                do_fit(&neighbors[i])
+            } else {
+                // KD-tree must be provided when precomputed neighbors aren't available
+                let tree = kdtree
+                    .expect("KD-tree must be provided when precomputed neighbors aren't available");
+                let query_offset = i * dims;
+                let query_point = &x[query_offset..query_offset + dims];
+                let neighborhood = tree.find_k_nearest(query_point, window_size, &dist_calc, None);
+                do_fit(&neighborhood)
+            };
+
+            if let Some((val, leverage)) = result {
+                y_smooth[i] = val;
+                if let Some(ref mut lev_slice) = leverages {
+                    lev_slice[i] = leverage;
                 }
+            } else {
+                y_smooth[i] = y[i];
             }
-            if tie_end > last_fitted {
-                last_fitted = tie_end;
-            }
-
-            // Determine current anchor point to fit
-            // Either last point within delta range, or at minimum last_fitted+1
-            let current = usize::max(next_idx.saturating_sub(1), last_fitted + 1).min(n - 1);
-
-            // Check if we've made progress
-            if current <= last_fitted {
-                break;
-            }
-
-            // Update window to be centered around current point
-            window.recenter(x, current, n);
-
-            // Fit current point
-            let ctx = RegressionContext {
-                x,
-                y,
-                idx: current,
-                window,
-                use_robustness,
-                robustness_weights,
-                weights,
-                weight_function,
-                zero_weight_fallback,
-            };
-
-            y_smooth[current] = fitter.fit(ctx).unwrap_or_else(|| y[current]);
-
-            // Linearly interpolate between last fitted and current
-            interpolate_gap(x, y_smooth, last_fitted, current);
-            last_fitted = current;
-        }
-
-        // Final interpolation to the end if necessary
-        if last_fitted < n.saturating_sub(1) {
-            // Fit the last point explicitly
-            let final_idx = n - 1;
-            window.recenter(x, final_idx, n);
-
-            let ctx = RegressionContext {
-                x,
-                y,
-                idx: final_idx,
-                window,
-                use_robustness,
-                robustness_weights,
-                weights,
-                weight_function,
-                zero_weight_fallback,
-            };
-
-            y_smooth[final_idx] = fitter.fit(ctx).unwrap_or_else(|| y[final_idx]);
-            interpolate_gap(x, y_smooth, last_fitted, final_idx);
         }
     }
 }

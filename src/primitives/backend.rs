@@ -12,6 +12,15 @@
 //! * **Extension-focused**: These types exist to support GPU-accelerated crates.
 //! * **Hidden by default**: Fields using `Backend` are `#[doc(hidden)]` in public APIs.
 //!
+//! ## Key concepts
+//!
+//! * **CPU**: Default execution mode (standard Rust code).
+//! * **GPU**: Hardware accelerated mode (requires external dependencies).
+//!
+//! ## Invariants
+//!
+//! * The default backend is always `CPU`.
+//!
 //! ## Non-goals
 //!
 //! * This module does not provide GPU implementations (handled by external crates).

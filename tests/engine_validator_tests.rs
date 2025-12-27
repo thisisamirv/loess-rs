@@ -34,7 +34,7 @@ fn make_valid_xy() -> (Vec<f64>, Vec<f64>) {
 fn test_validate_empty_input() {
     let x: Vec<f64> = vec![];
     let y: Vec<f64> = vec![];
-    let res = Validator::validate_inputs(&x, &y);
+    let res = Validator::validate_inputs(&x, &y, 1);
 
     assert!(
         matches!(res, Err(LoessError::EmptyInput)),
@@ -49,7 +49,7 @@ fn test_validate_empty_input() {
 fn test_validate_length_mismatch() {
     let x = vec![0.0, 1.0];
     let y = vec![1.0];
-    let res = Validator::validate_inputs(&x, &y);
+    let res = Validator::validate_inputs(&x, &y, 1);
 
     assert!(
         matches!(
@@ -67,7 +67,7 @@ fn test_validate_length_mismatch() {
 fn test_validate_too_few_points() {
     let x = vec![0.0];
     let y = vec![1.0];
-    let res = Validator::validate_inputs(&x, &y);
+    let res = Validator::validate_inputs(&x, &y, 1);
 
     assert!(
         matches!(res, Err(LoessError::TooFewPoints { got: 1, min: 2 })),
@@ -82,7 +82,7 @@ fn test_validate_too_few_points() {
 fn test_validate_nonfinite_x() {
     let x = vec![0.0, f64::NAN];
     let y = vec![1.0, 2.0];
-    let res_x = Validator::validate_inputs(&x, &y);
+    let res_x = Validator::validate_inputs(&x, &y, 1);
 
     if let Err(LoessError::InvalidNumericValue(s)) = res_x {
         assert!(
@@ -101,7 +101,7 @@ fn test_validate_nonfinite_x() {
 fn test_validate_nonfinite_y() {
     let x = vec![0.0, 1.0];
     let y = vec![1.0, f64::INFINITY];
-    let res_y = Validator::validate_inputs(&x, &y);
+    let res_y = Validator::validate_inputs(&x, &y, 1);
 
     if let Err(LoessError::InvalidNumericValue(s)) = res_y {
         assert!(
@@ -119,13 +119,13 @@ fn test_validate_nonfinite_y() {
 #[test]
 fn test_validate_valid_input() {
     let (x, y) = make_valid_xy();
-    let res = Validator::validate_inputs(&x, &y);
+    let res = Validator::validate_inputs(&x, &y, 1);
 
     assert!(res.is_ok(), "Valid input should pass");
 
     // Edge case: fraction=1.0 is valid
     assert!(
-        Validator::validate_inputs(&x, &y).is_ok(),
+        Validator::validate_inputs(&x, &y, 1).is_ok(),
         "Fraction 1.0 should be valid"
     );
 }

@@ -36,7 +36,7 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 // External dependencies
-use core::cmp::Ordering;
+use core::cmp::Ordering::Equal;
 use num_traits::Float;
 
 // ============================================================================
@@ -147,26 +147,42 @@ pub fn LOOCV<T>(fractions: &[T]) -> CVConfig<'_, T> {
 // ============================================================================
 
 impl CVKind {
-    // ========================================================================
-    // Public API
-    // ========================================================================
-
     /// Run cross-validation to select the best fraction.
-    pub fn run<T, F>(
+    #[allow(clippy::too_many_arguments)]
+    pub fn run<T, F, P>(
         self,
         x: &[T],
         y: &[T],
+        dimensions: usize,
         fractions: &[T],
         seed: Option<u64>,
-        smoother: F,
+        mut smoother: F,
+        mut predictor: Option<P>,
     ) -> (T, Vec<T>)
     where
         T: Float,
-        F: Fn(&[T], &[T], T) -> Vec<T> + Copy,
+        F: FnMut(&[T], &[T], T) -> Vec<T>,
+        P: FnMut(&[T], &[T], &[T], T) -> Vec<T>,
     {
         match self {
-            CVKind::KFold(k) => Self::kfold_cross_validation(x, y, fractions, k, seed, smoother),
-            CVKind::LOOCV => Self::leave_one_out_cross_validation(x, y, fractions, smoother),
+            CVKind::KFold(k) => Self::kfold_cross_validation(
+                x,
+                y,
+                dimensions,
+                fractions,
+                k,
+                seed,
+                &mut smoother,
+                predictor.as_mut(),
+            ),
+            CVKind::LOOCV => Self::leave_one_out_cross_validation(
+                x,
+                y,
+                dimensions,
+                fractions,
+                &mut smoother,
+                predictor.as_mut(),
+            ),
         }
     }
 
@@ -178,6 +194,7 @@ impl CVKind {
     pub fn build_subset_inplace<T: Float>(
         x: &[T],
         y: &[T],
+        dims: usize,
         indices: &[usize],
         tx: &mut Vec<T>,
         ty: &mut Vec<T>,
@@ -185,7 +202,8 @@ impl CVKind {
         tx.clear();
         ty.clear();
         for &i in indices {
-            tx.push(x[i]);
+            let offset = i * dims;
+            tx.extend_from_slice(&x[offset..offset + dims]);
             ty.push(y[i]);
         }
     }
@@ -194,11 +212,12 @@ impl CVKind {
     pub fn build_subset_from_indices<T: Float>(
         x: &[T],
         y: &[T],
+        dims: usize,
         indices: &[usize],
     ) -> (Vec<T>, Vec<T>) {
-        let mut tx = Vec::with_capacity(indices.len());
+        let mut tx = Vec::with_capacity(indices.len() * dims);
         let mut ty = Vec::with_capacity(indices.len());
-        Self::build_subset_inplace(x, y, indices, &mut tx, &mut ty);
+        Self::build_subset_inplace(x, y, dims, indices, &mut tx, &mut ty);
         (tx, ty)
     }
 
@@ -336,7 +355,7 @@ impl CVKind {
         let best_idx = scores
             .iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(Ordering::Equal))
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(Equal))
             .map(|(i, _)| i)
             .unwrap_or(0);
 
@@ -344,19 +363,23 @@ impl CVKind {
     }
 
     /// Perform k-fold cross-validation.
-    fn kfold_cross_validation<T, F>(
+    #[allow(clippy::too_many_arguments)]
+    fn kfold_cross_validation<T, F, P>(
         x: &[T],
         y: &[T],
+        dims: usize,
         fractions: &[T],
         k: usize,
         seed: Option<u64>,
-        smoother: F,
+        smoother: &mut F,
+        mut predictor: Option<&mut P>,
     ) -> (T, Vec<T>)
     where
         T: Float,
-        F: Fn(&[T], &[T], T) -> Vec<T>,
+        F: FnMut(&[T], &[T], T) -> Vec<T>,
+        P: FnMut(&[T], &[T], &[T], T) -> Vec<T>,
     {
-        let n = x.len();
+        let n = x.len() / dims;
         if n < k || k < 2 {
             return (
                 fractions.first().copied().unwrap_or(T::zero()),
@@ -377,83 +400,80 @@ impl CVKind {
             }
         }
 
-        // Pre-allocate scratch buffers for training set
-        let mut train_x = Vec::with_capacity(n);
+        // Pre-allocate scratch buffers
+        let mut train_x = Vec::with_capacity(n * dims);
         let mut train_y = Vec::with_capacity(n);
+        let mut test_x = Vec::with_capacity(n * dims);
+        let mut test_y = Vec::with_capacity(n);
 
         for (frac_idx, &frac) in fractions.iter().enumerate() {
-            // Store RMSE for each fold, then compute mean
             let mut fold_rmses = Vec::with_capacity(k);
 
             for fold in 0..k {
-                // Define test set for this fold
                 let test_start = fold * fold_size;
                 let test_end = if fold == k - 1 {
-                    n // Last fold includes remainder
+                    n
                 } else {
                     (fold + 1) * fold_size
                 };
 
-                // Build training set using (potentially shuffled) indices
+                // Build training and test sets
                 train_x.clear();
                 train_y.clear();
-
                 for &idx in &indices[0..test_start] {
-                    train_x.push(x[idx]);
+                    let offset = idx * dims;
+                    train_x.extend_from_slice(&x[offset..offset + dims]);
                     train_y.push(y[idx]);
                 }
                 for &idx in &indices[test_end..n] {
-                    train_x.push(x[idx]);
+                    let offset = idx * dims;
+                    train_x.extend_from_slice(&x[offset..offset + dims]);
                     train_y.push(y[idx]);
                 }
 
-                // Training data MUST be sorted for LOESS
-                // We need to sort by x and permute y accordingly
-                let mut train_data: Vec<(T, T)> = train_x
-                    .iter()
-                    .zip(train_y.iter())
-                    .map(|(&xi, &yi)| (xi, yi))
-                    .collect();
-                train_data.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-
-                let (sorted_tx, sorted_ty): (Vec<T>, Vec<T>) = train_data.into_iter().unzip();
-
-                // Fit smoother on training data
-                let train_smooth = smoother(&sorted_tx, &sorted_ty, frac);
-
-                // Compute RMSE on test set using batched interpolation
-                // Test points from original buffers (must be collected from indices too)
-                let mut test_x = Vec::with_capacity(test_end - test_start);
-                let mut test_y = Vec::with_capacity(test_end - test_start);
+                test_x.clear();
+                test_y.clear();
                 for &idx in &indices[test_start..test_end] {
-                    test_x.push(x[idx]);
+                    let offset = idx * dims;
+                    test_x.extend_from_slice(&x[offset..offset + dims]);
                     test_y.push(y[idx]);
                 }
 
-                let mut predictions = vec![T::zero(); test_x.len()];
-                Self::interpolate_prediction_batch(
-                    &sorted_tx,
-                    &train_smooth,
-                    &test_x,
-                    &mut predictions,
-                );
+                let predictions = if let Some(ref mut p_fn) = predictor {
+                    p_fn(&train_x, &train_y, &test_x, frac)
+                } else {
+                    // 1D Case: Training data MUST be sorted for LOESS
+                    let mut train_data: Vec<(T, T)> = train_x
+                        .iter()
+                        .zip(train_y.iter())
+                        .map(|(&xi, &yi)| (xi, yi))
+                        .collect();
+                    train_data.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Equal));
+                    let (sorted_tx, sorted_ty): (Vec<T>, Vec<T>) = train_data.into_iter().unzip();
+
+                    let train_smooth = smoother(&sorted_tx, &sorted_ty, frac);
+                    let mut preds = vec![T::zero(); test_x.len()];
+                    Self::interpolate_prediction_batch(
+                        &sorted_tx,
+                        &train_smooth,
+                        &test_x,
+                        &mut preds,
+                    );
+                    preds
+                };
 
                 let mut fold_error = T::zero();
-                let mut fold_count = T::zero();
                 for (i, &predicted) in predictions.iter().enumerate() {
                     let actual = test_y[i];
                     let error = actual - predicted;
                     fold_error = fold_error + error * error;
-                    fold_count = fold_count + T::one();
                 }
 
-                // Compute RMSE for this fold
-                if fold_count > T::zero() {
-                    fold_rmses.push((fold_error / fold_count).sqrt());
+                if !test_y.is_empty() {
+                    fold_rmses.push((fold_error / T::from(test_y.len()).unwrap()).sqrt());
                 }
             }
 
-            // Compute mean of fold RMSEs (matches sklearn's cross_val_score)
             if !fold_rmses.is_empty() {
                 let sum: T = fold_rmses.iter().copied().fold(T::zero(), |a, b| a + b);
                 cv_scores[frac_idx] = sum / T::from(fold_rmses.len()).unwrap();
@@ -466,44 +486,56 @@ impl CVKind {
     }
 
     /// Perform leave-one-out cross-validation (LOOCV).
-    fn leave_one_out_cross_validation<T, F>(
+    fn leave_one_out_cross_validation<T, F, P>(
         x: &[T],
         y: &[T],
+        dims: usize,
         fractions: &[T],
-        smoother: F,
+        smoother: &mut F,
+        mut predictor: Option<&mut P>,
     ) -> (T, Vec<T>)
     where
         T: Float,
-        F: Fn(&[T], &[T], T) -> Vec<T>,
+        F: FnMut(&[T], &[T], T) -> Vec<T>,
+        P: FnMut(&[T], &[T], &[T], T) -> Vec<T>,
     {
-        let n = x.len();
+        let n = x.len() / dims;
         let mut cv_scores = vec![T::zero(); fractions.len()];
 
-        // Pre-allocate scratch buffers for training set
-        let mut train_x = Vec::with_capacity(n - 1);
+        // Pre-allocate scratch buffers
+        let mut train_x = Vec::with_capacity((n - 1) * dims);
         let mut train_y = Vec::with_capacity(n - 1);
+        let mut test_point = vec![T::zero(); dims];
 
         for (frac_idx, &frac) in fractions.iter().enumerate() {
             let mut total_error = T::zero();
 
             for i in 0..n {
-                // Build training set (all points except i) using scratch buffers
+                // Build training set (all points except i)
                 train_x.clear();
                 train_y.clear();
-                for j in 0..i {
-                    train_x.push(x[j]);
-                    train_y.push(y[j]);
+                for (j, &val) in y.iter().enumerate().take(i) {
+                    let offset = j * dims;
+                    train_x.extend_from_slice(&x[offset..offset + dims]);
+                    train_y.push(val);
                 }
-                for j in (i + 1)..n {
-                    train_x.push(x[j]);
-                    train_y.push(y[j]);
+                for (j, &val) in y.iter().enumerate().skip(i + 1) {
+                    let offset = j * dims;
+                    train_x.extend_from_slice(&x[offset..offset + dims]);
+                    train_y.push(val);
                 }
 
-                // Fit smoother on training data
-                let train_smooth = smoother(&train_x, &train_y, frac);
+                let test_offset = i * dims;
+                test_point.copy_from_slice(&x[test_offset..test_offset + dims]);
 
-                // Predict at held-out point
-                let predicted = Self::interpolate_prediction(&train_x, &train_smooth, x[i]);
+                let predicted = if let Some(ref mut p_fn) = predictor {
+                    let preds = p_fn(&train_x, &train_y, &test_point, frac);
+                    preds[0]
+                } else {
+                    let train_smooth = smoother(&train_x, &train_y, frac);
+                    Self::interpolate_prediction(&train_x, &train_smooth, test_point[0])
+                };
+
                 let error = y[i] - predicted;
                 total_error = total_error + error * error;
             }
