@@ -291,44 +291,6 @@ def benchmark_iterations(iterations: int = 10) -> List[BenchmarkResult]:
     return results
 
 
-def benchmark_delta(iterations: int = 10) -> List[BenchmarkResult]:
-    """Benchmark delta parameter effects."""
-    print("\n" + "=" * 80)
-    print("DELTA")
-    print("=" * 80)
-    
-    results = []
-    size = 10000
-    x, y = generate_sine_data(size, seed=42)
-    
-    delta_configs = [
-        ("delta_none", 0.0),
-        ("delta_small", 0.5), # ~5% of range 10?
-        ("delta_medium", 2.0),
-        ("delta_large", 10.0),
-    ]
-    
-    # Range is 0-10, so 0.5 is 5%, etc.
-    # In skmisc/R loess, 'cell' parameter controls interpolation accuracy approximation
-    
-    for name, delta in delta_configs:
-        def run(d=delta):
-            # 'cell' is roughly equivalent to delta (max distance for interpolation)
-            if d == 0.0:
-                # No interpolation -> 'direct' surface ?? 
-                # Or simply cell=0.0?
-                # R's 'surface' parameter: 'interpolate' vs 'direct'.
-                # Direct = exact calculation everywhere (delta=0 equivalent).
-                l = loess(x, y, span=0.2, degree=1, surface='direct')
-            else:
-                l = loess(x, y, span=0.2, degree=1, surface='interpolate', cell=d)
-            l.fit()
-        
-        result = run_benchmark(name, size, run, iterations)
-        results.append(result)
-        print(f"  {name}: {result.mean_time_ms:.2f} ms ± {result.std_time_ms:.2f} ms")
-    
-    return results
 
 
 def benchmark_financial(iterations: int = 10) -> List[BenchmarkResult]:
@@ -390,8 +352,7 @@ def benchmark_genomic(iterations: int = 10) -> List[BenchmarkResult]:
         x, y = generate_genomic_data(size, seed=42)
         
         def run():
-            # Delta 100.0 (x range is 1000 * size, so 100 is small relative to range)
-            l = loess(x, y, span=0.1, degree=1, cell=100.0)
+            l = loess(x, y, span=0.1, degree=1)
             l.fit()
         
         result = run_benchmark(f"genomic_{size}", size, run, iterations)
@@ -529,7 +490,6 @@ def main():
     all_results["scalability"] = benchmark_scalability(iterations)
     all_results["fraction"] = benchmark_fraction(iterations)
     all_results["iterations"] = benchmark_iterations(iterations)
-    all_results["delta"] = benchmark_delta(iterations)
     all_results["financial"] = benchmark_financial(iterations)
     all_results["scientific"] = benchmark_scientific(iterations)
     all_results["genomic"] = benchmark_genomic(iterations)

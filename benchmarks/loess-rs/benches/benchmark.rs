@@ -2,7 +2,7 @@
 //!
 //! Benchmarks cover:
 //! - Scalability (1K to 50K points)
-//! - Algorithm parameters (fraction, iterations, delta)
+//! - Algorithm parameters (fraction, iterations)
 //! - Real-world scenarios (financial, scientific, genomic)
 //! - Pathological cases (outliers, clustered data, high noise)
 //! - Weight functions (tricube, gaussian, epanechnikov)
@@ -276,38 +276,6 @@ fn bench_iterations(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_delta(c: &mut Criterion) {
-    let mut group = c.benchmark_group("delta");
-    group.sample_size(50);
-
-    let size = 10000;
-    let (x, y) = generate_sine_data(size, 42);
-
-    let delta_configs = [
-        ("none", 0.0),
-        ("small", 0.5),
-        ("medium", 2.0),
-        ("large", 10.0),
-    ];
-
-    for (name, delta) in delta_configs {
-        group.bench_with_input(BenchmarkId::new("batch", name), &delta, |b, &delta| {
-            b.iter(|| {
-                Loess::new()
-                    .fraction(0.2)
-                    .iterations(2)
-                    .delta(delta)
-                    .adapter(Batch)
-                    .build()
-                    .unwrap()
-                    .fit(black_box(&x), black_box(&y))
-                    .unwrap()
-            })
-        });
-    }
-    group.finish();
-}
-
 fn bench_financial(c: &mut Criterion) {
     let mut group = c.benchmark_group("financial");
     group.sample_size(100);
@@ -366,7 +334,6 @@ fn bench_genomic(c: &mut Criterion) {
                 Loess::new()
                     .fraction(0.1)
                     .iterations(3)
-                    .delta(100.0)
                     .adapter(Batch)
                     .build()
                     .unwrap()
@@ -610,7 +577,6 @@ criterion_group!(
     bench_scalability,
     bench_fraction,
     bench_iterations,
-    bench_delta,
     bench_financial,
     bench_scientific,
     bench_genomic,

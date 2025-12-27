@@ -123,8 +123,6 @@ def find_criterion_results(criterion_dir: Path) -> Dict[str, List[dict]]:
                                 name = f"fraction_{param}"
                             elif category == "iterations":
                                 name = f"iterations_{param}"
-                            elif category == "delta":
-                                name = f"delta_{param}"
                             elif category == "polynomial_degrees":
                                 # bench_id is "degree", param is "linear", etc.
                                 name = f"{bench_id}_{param}"
