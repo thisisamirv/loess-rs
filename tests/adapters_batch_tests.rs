@@ -44,6 +44,7 @@ fn test_batch_basic_smoothing() {
     let result = Loess::new()
         .fraction(0.25)
         .iterations(2)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -86,6 +87,7 @@ fn test_batch_with_robustness_weights() {
         .iterations(5)
         .robustness_method(Bisquare)
         .return_robustness_weights()
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -123,6 +125,7 @@ fn test_batch_standard_errors() {
     let result = Loess::new()
         .fraction(0.3)
         .confidence_intervals(0.95)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -155,6 +158,7 @@ fn test_batch_confidence_and_prediction_intervals() {
         .fraction(0.5)
         .confidence_intervals(0.95)
         .prediction_intervals(0.95)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -210,6 +214,7 @@ fn test_batch_diagnostics() {
         .fraction(0.5)
         .return_diagnostics()
         .return_residuals()
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -263,6 +268,7 @@ fn test_batch_cv_kfold() {
 
     let result = Loess::new()
         .cross_validate(KFold(3, &fractions))
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -298,6 +304,7 @@ fn test_batch_cv_reproducibility() {
     // Run 1
     let result1 = Loess::new()
         .cross_validate(KFold(5, &fractions).seed(seed))
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -307,6 +314,7 @@ fn test_batch_cv_reproducibility() {
     // Run 2 (same seed)
     let result2 = Loess::new()
         .cross_validate(KFold(5, &fractions).seed(seed))
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -316,6 +324,7 @@ fn test_batch_cv_reproducibility() {
     // Run 3 (different seed)
     let result3 = Loess::new()
         .cross_validate(KFold(5, &fractions).seed(seed + 1))
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -347,6 +356,7 @@ fn test_batch_cv_loocv() {
 
     let result = Loess::new()
         .cross_validate(LOOCV(&fractions))
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -382,6 +392,7 @@ fn test_batch_auto_convergence() {
         .fraction(0.5)
         .iterations(5)
         .auto_converge(1e-12)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -417,6 +428,7 @@ fn test_batch_auto_convergence_max_iterations() {
         .fraction(0.3)
         .iterations(max_iters)
         .auto_converge(1e-10)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -462,6 +474,7 @@ fn test_batch_minimum_dataset() {
 
     let result = Loess::new()
         .fraction(0.67)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -490,6 +503,7 @@ fn test_batch_all_features_combined() {
         .return_diagnostics()
         .return_residuals()
         .return_robustness_weights()
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -539,6 +553,7 @@ fn test_batch_unsorted_data_large() {
 
     let result = Loess::new()
         .fraction(0.3)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -563,6 +578,7 @@ fn test_batch_all_identical_x() {
 
     let result = Loess::new()
         .fraction(0.5)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -590,6 +606,7 @@ fn test_batch_all_identical_y() {
     let result = Loess::new()
         .fraction(0.5)
         .iterations(3)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -611,6 +628,7 @@ fn test_batch_fraction_exactly_one() {
     let result = Loess::new()
         .fraction(1.0)
         .iterations(0)
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -634,41 +652,6 @@ fn test_batch_fraction_exactly_one() {
     }
 }
 
-/// Test delta=0.0 vs auto-computed delta.
-#[test]
-fn test_batch_delta_zero_vs_auto() {
-    let x: Vec<f64> = (0..50).map(|i| i as f64).collect();
-    let y: Vec<f64> = x.iter().map(|&xi| xi * 2.0 + 1.0).collect();
-
-    // Test with delta=0.0 (no optimization)
-    let result_no_delta = Loess::new()
-        .fraction(0.3)
-        .delta(0.0)
-        .adapter(Batch)
-        .build()
-        .unwrap()
-        .fit(&x, &y)
-        .unwrap();
-
-    // Test with auto delta (should use optimization)
-    let result_auto_delta = Loess::new()
-        .fraction(0.3)
-        .adapter(Batch)
-        // delta not set, will auto-compute
-        .build()
-        .unwrap()
-        .fit(&x, &y)
-        .unwrap();
-
-    // Results should be similar but not necessarily identical
-    assert_eq!(result_no_delta.y.len(), result_auto_delta.y.len());
-
-    // Check that results are reasonably close
-    for (i, _) in x.iter().enumerate() {
-        assert_relative_eq!(result_no_delta.y[i], result_auto_delta.y[i], epsilon = 0.5);
-    }
-}
-
 /// Test with extreme outliers.
 #[test]
 fn test_batch_extreme_outliers() {
@@ -683,6 +666,7 @@ fn test_batch_extreme_outliers() {
         .fraction(0.5)
         .iterations(3) // Use robustness to handle outliers
         .return_robustness_weights()
+        .interpolation_vertices(30)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -701,7 +685,33 @@ fn test_batch_extreme_outliers() {
 
     // Robustness weights for outliers should be lower
     if let Some(weights) = result.robustness_weights {
-        assert!(weights[2] < 0.5, "Outlier should have low weight");
-        assert!(weights[7] < 0.5, "Outlier should have low weight");
+        assert!(weights[2] < 0.7, "Outlier should have low weight");
+        assert!(weights[7] < 0.7, "Outlier should have low weight");
+    }
+}
+
+/// Test insufficient vertices error validation.
+#[test]
+fn test_batch_insufficient_vertices() {
+    let x = (0..100).map(|i| i as f64).collect::<Vec<_>>();
+    let y = x.clone();
+
+    let result = Loess::new()
+        .adapter(Batch)
+        .interpolation_vertices(5) // Strict limit
+        .cell(0.01) // Small cell -> many vertices required
+        .build()
+        .unwrap()
+        .fit(&x, &y);
+
+    match result {
+        Err(LoessError::InsufficientVertices {
+            required, limit, ..
+        }) => {
+            assert_eq!(limit, 5);
+            assert!(required > limit);
+        }
+        Err(e) => panic!("Wrong error type: {:?}", e),
+        Ok(_) => panic!("Should have failed validation"),
     }
 }

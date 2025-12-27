@@ -119,14 +119,6 @@ impl Validator {
     // Parameter Validation
     // ========================================================================
 
-    /// Validate the delta optimization parameter.
-    pub fn validate_delta<T: Float>(delta: T) -> Result<(), LoessError> {
-        if !delta.is_finite() || delta < T::zero() {
-            return Err(LoessError::InvalidDelta(delta.to_f64().unwrap_or(f64::NAN)));
-        }
-        Ok(())
-    }
-
     /// Validate the smoothing fraction (bandwidth) parameter.
     pub fn validate_fraction<T: Float>(fraction: T) -> Result<(), LoessError> {
         if !fraction.is_finite() || fraction <= T::zero() || fraction > T::one() {
@@ -192,6 +184,79 @@ impl Validator {
                 tol.to_f64().unwrap_or(f64::NAN),
             ));
         }
+        Ok(())
+    }
+
+    /// Validate interpolation grid resolution against vertex limits.
+    ///
+    /// **Resolution First:**
+    /// - `cell` must be in the range (0, 1]
+    /// - Consistency check only when BOTH `cell` AND `interpolation_vertices` are
+    ///   explicitly provided by the user
+    ///
+    /// When both are provided, estimates the number of vertices required by the
+    /// cell size and checks if it exceeds the user-provided limit.
+    pub fn validate_interpolation_grid<T: Float>(
+        cell: T,
+        fraction: T,
+        dimensions: usize,
+        max_vertices: usize,
+        cell_provided: bool,
+        limit_provided: bool,
+    ) -> Result<(), LoessError> {
+        let cell_f64 = cell.to_f64().unwrap_or(0.2);
+
+        // Rule 1: Validate cell range (0, 1]
+        if cell_f64 <= 0.0 || cell_f64 > 1.0 {
+            return Err(LoessError::InvalidCell(cell_f64));
+        }
+
+        // Rule 2: Only check consistency when BOTH parameters are user-provided
+        // This follows "Resolution First" philosophy where the grid size is purely
+        // resolution-driven via `cell` unless explicitly limited.
+        if cell_provided && limit_provided {
+            let one = T::one();
+
+            // Effective cell width fraction relative to domain: fraction * cell
+            let width_fraction = fraction * cell;
+
+            if width_fraction <= T::zero() {
+                return Err(LoessError::InsufficientVertices {
+                    required: usize::MAX,
+                    limit: max_vertices,
+                    cell: cell_f64,
+                    cell_provided,
+                    limit_provided,
+                });
+            }
+
+            // Estimated cells per dimension: 1 / width_fraction
+            let cells_per_dim = one / width_fraction;
+            let cells_per_dim_f64 = cells_per_dim.to_f64().unwrap_or(f64::INFINITY);
+
+            // Vertices per dimension is cells + 1. Ceiling to be safe.
+            let vertices_per_dim = cells_per_dim_f64.ceil() + 1.0;
+
+            // Calculate total estimated vertices
+            let estimated_vertices = vertices_per_dim.powi(dimensions as i32);
+
+            if estimated_vertices > max_vertices as f64 {
+                let required = if estimated_vertices > (usize::MAX as f64) {
+                    usize::MAX
+                } else {
+                    estimated_vertices as usize
+                };
+
+                return Err(LoessError::InsufficientVertices {
+                    required,
+                    limit: max_vertices,
+                    cell: cell_f64,
+                    cell_provided,
+                    limit_provided,
+                });
+            }
+        }
+
         Ok(())
     }
 

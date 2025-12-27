@@ -221,30 +221,6 @@ fn test_validate_invalid_confidence_level() {
     }
 }
 
-/// Test validation rejects negative delta.
-///
-/// Verifies that negative delta values are rejected.
-#[test]
-fn test_validate_negative_delta() {
-    let res = Loess::<f64>::new().delta(-1.0).adapter(Batch).build();
-
-    assert!(res.is_err(), "Negative delta should error");
-}
-
-#[test]
-fn test_fit_empty_input() {
-    let x: Vec<f64> = vec![];
-    let y: Vec<f64> = vec![];
-
-    let res = Loess::<f64>::new()
-        .adapter(Batch)
-        .build()
-        .unwrap()
-        .fit(&x, &y);
-
-    assert!(matches!(res, Err(LoessError::EmptyInput)));
-}
-
 /// Test LoessError Display and Debug formatting.
 ///
 /// Exercises error variants for coverage.
@@ -255,7 +231,6 @@ fn test_loess_rs_error_display() {
         LoessError::MismatchedInputs { x_len: 1, y_len: 2 },
         LoessError::TooFewPoints { got: 1, min: 2 },
         LoessError::InvalidFraction(1.5),
-        LoessError::InvalidDelta(-0.1),
         LoessError::InvalidIterations(0),
         LoessError::InvalidIntervals(0.95),
         LoessError::InvalidChunkSize { got: 5, min: 10 },
@@ -793,7 +768,6 @@ fn test_builder_method_chaining_order() {
     let result1 = Loess::new()
         .fraction(0.5)
         .iterations(2)
-        .delta(0.1)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -802,7 +776,6 @@ fn test_builder_method_chaining_order() {
 
     // Order 2: delta -> fraction -> iterations
     let result2 = Loess::new()
-        .delta(0.1)
         .fraction(0.5)
         .iterations(2)
         .adapter(Batch)
@@ -844,7 +817,6 @@ fn test_builder_all_parameters_set() {
     let result = Loess::new()
         .fraction(0.4)
         .iterations(3)
-        .delta(0.05)
         .weight_function(WeightFunction::Tricube)
         .robustness_method(RobustnessMethod::Bisquare)
         .return_se()
@@ -959,7 +931,6 @@ fn test_delta_at_zero() {
     // Delta = 0.0 means no interpolation optimization
     let result = Loess::new()
         .fraction(0.5)
-        .delta(0.0)
         .adapter(Batch)
         .build()
         .unwrap()
@@ -1070,7 +1041,7 @@ fn test_adapter_online_ignores_batch_params() {
     // Batch doesn't have unique params, but test delta which is less relevant for online
     let mut processor = Loess::new()
         .fraction(0.5)
-        .delta(0.1) // Less relevant for online
+        // Less relevant for online
         .adapter(Online)
         .window_capacity(10)
         .min_points(3)

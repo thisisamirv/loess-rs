@@ -15,7 +15,7 @@
 //! ## Key concepts
 //!
 //! 1. **Input validation**: Empty arrays, mismatched lengths, non-finite values.
-//! 2. **Parameter validation**: Invalid fraction, delta, iterations, or interval levels.
+//! 2. **Parameter validation**: Invalid fraction, iterations, or interval levels.
 //! 3. **Adapter constraints**: Invalid chunk size, overlap, or window capacity.
 //! 4. **Feature support**: Features not supported by the selected execution adapter.
 //!
@@ -76,9 +76,6 @@ pub enum LoessError {
     /// Smoothing fraction must be in the range (0, 1].
     InvalidFraction(f64),
 
-    /// Delta controls interpolation optimization and must be non-negative.
-    InvalidDelta(f64),
-
     /// Local regression requires at least 1 iteration.
     InvalidIterations(usize),
 
@@ -133,6 +130,23 @@ pub enum LoessError {
         /// Name of the parameter that was set multiple times.
         parameter: &'static str,
     },
+
+    /// Cell size must be in the range (0, 1].
+    InvalidCell(f64),
+
+    /// Interpolation cell size requires more vertices than allowed limit.
+    InsufficientVertices {
+        /// Estimated number of vertices required.
+        required: usize,
+        /// Maximum number of vertices allowed.
+        limit: usize,
+        /// The cell size that caused the overflow.
+        cell: f64,
+        /// Whether the cell size was explicitly provided by the user.
+        cell_provided: bool,
+        /// Whether the limit was explicitly provided by the user.
+        limit_provided: bool,
+    },
 }
 
 // ============================================================================
@@ -154,7 +168,6 @@ impl Display for LoessError {
             Self::InvalidFraction(frac) => {
                 write!(f, "Invalid fraction: {frac} (must be > 0 and <= 1)")
             }
-            Self::InvalidDelta(delta) => write!(f, "Invalid delta: {delta} (must be >= 0)"),
             Self::InvalidIterations(iter) => {
                 write!(f, "Invalid iterations: {iter} (must be in [0, 1000])")
             }
@@ -196,6 +209,39 @@ impl Display for LoessError {
                     f,
                     "Parameter '{parameter}' was set multiple times. Each parameter can only be configured once."
                 )
+            }
+            Self::InvalidCell(cell) => {
+                write!(f, "Invalid cell size: {cell} (must be in range (0, 1])")
+            }
+            Self::InsufficientVertices {
+                required,
+                limit,
+                cell,
+                cell_provided,
+                limit_provided,
+            } => {
+                let cell_desc = if *cell_provided {
+                    format!("user-provided cell size {cell}")
+                } else {
+                    format!("default cell size {cell}")
+                };
+                let limit_desc = if *limit_provided {
+                    format!("user-provided limit {limit}")
+                } else {
+                    format!("default limit (N = {limit})")
+                };
+
+                if !*cell_provided && *limit_provided {
+                    write!(
+                        f,
+                        "Insufficient vertices: {cell_desc} does not work with {limit_desc}. Try passing a larger cell size manually."
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Insufficient vertices: {cell_desc} requires ~{required} vertices, but {limit_desc} is too small"
+                    )
+                }
             }
         }
     }

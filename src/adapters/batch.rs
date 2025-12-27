@@ -43,11 +43,10 @@ use core::fmt::Debug;
 use num_traits::Float;
 
 // Internal dependencies
-use crate::algorithms::interpolation::calculate_delta;
 use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::engine::executor::{
-    CVPassFn, FitPassFn, IntervalPassFn, LoessConfig, LoessExecutor, SmoothPassFn,
+    CVPassFn, FitPassFn, IntervalPassFn, LoessConfig, LoessExecutor, SmoothPassFn, SurfaceMode,
 };
 use crate::engine::output::LoessResult;
 use crate::engine::validator::Validator;
@@ -72,9 +71,6 @@ pub struct BatchLoessBuilder<T: Float> {
 
     /// Number of robustness iterations
     pub iterations: usize,
-
-    /// Optimization delta
-    pub delta: Option<T>,
 
     /// Kernel weight function
     pub weight_function: WeightFunction,
@@ -124,6 +120,15 @@ pub struct BatchLoessBuilder<T: Float> {
     /// Distance metric for nD neighborhood computation.
     pub distance_metric: DistanceMetric<T>,
 
+    /// Cell size for interpolation subdivision (default: 0.2).
+    pub cell: Option<f64>,
+
+    /// Maximum number of vertices for interpolation.
+    pub interpolation_vertices: Option<usize>,
+
+    /// Evaluation mode (default: Interpolation)
+    pub surface_mode: SurfaceMode,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -168,7 +173,6 @@ impl<T: Float> BatchLoessBuilder<T> {
         Self {
             fraction: T::from(0.67).unwrap(),
             iterations: 3,
-            delta: None,
             weight_function: WeightFunction::default(),
             robustness_method: RobustnessMethod::default(),
             interval_type: None,
@@ -185,6 +189,9 @@ impl<T: Float> BatchLoessBuilder<T> {
             polynomial_degree: PolynomialDegree::default(),
             dimensions: 1,
             distance_metric: DistanceMetric::default(),
+            cell: None,
+            interpolation_vertices: None,
+            surface_mode: SurfaceMode::default(),
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -208,12 +215,6 @@ impl<T: Float> BatchLoessBuilder<T> {
     /// Set the number of robustness iterations.
     pub fn iterations(mut self, iterations: usize) -> Self {
         self.iterations = iterations;
-        self
-    }
-
-    /// Set the delta parameter for interpolation optimization.
-    pub fn delta(mut self, delta: T) -> Self {
-        self.delta = Some(delta);
         self
     }
 
@@ -256,6 +257,18 @@ impl<T: Float> BatchLoessBuilder<T> {
     /// Enable returning robustness weights in the result.
     pub fn return_robustness_weights(mut self, enabled: bool) -> Self {
         self.return_robustness_weights = enabled;
+        self
+    }
+
+    /// Set cell size for interpolation.
+    pub fn cell(mut self, cell: f64) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+
+    /// Set maximum number of interpolation vertices.
+    pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
+        self.interpolation_vertices = Some(vertices);
         self
     }
 
@@ -351,11 +364,6 @@ impl<T: Float> BatchLoessBuilder<T> {
         // Validate iterations
         Validator::validate_iterations(self.iterations)?;
 
-        // Validate delta
-        if let Some(delta) = self.delta {
-            Validator::validate_delta(delta)?;
-        }
-
         // Validate interval type
         if let Some(ref method) = self.interval_type {
             Validator::validate_interval_level(method.level)?;
@@ -393,17 +401,31 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
         Validator::validate_inputs(x, y, self.config.dimensions)?;
 
         // KD-Tree handles unsorted data natively - no need to sort
-        let delta = calculate_delta(self.config.delta, x)?;
 
-        let zw_flag: u8 = self.config.zero_weight_fallback.to_u8();
+        // Check grid resolution only for interpolation mode
+        if self.config.surface_mode == SurfaceMode::Interpolation {
+            let n = y.len() / self.config.dimensions;
+            let cell_to_use = self.config.cell.unwrap_or(0.2);
+            let limit = self.config.interpolation_vertices.unwrap_or(n);
+            let cell_provided = self.config.cell.is_some();
+            let limit_provided = self.config.interpolation_vertices.is_some();
+
+            Validator::validate_interpolation_grid(
+                T::from(cell_to_use).unwrap_or_else(|| T::from(0.2).unwrap()),
+                self.config.fraction,
+                self.config.dimensions,
+                limit,
+                cell_provided,
+                limit_provided,
+            )?;
+        }
 
         // Configure batch execution
         let config = LoessConfig {
             fraction: Some(self.config.fraction),
             iterations: self.config.iterations,
-            delta,
             weight_function: self.config.weight_function,
-            zero_weight_fallback: zw_flag,
+            zero_weight_fallback: self.config.zero_weight_fallback,
             robustness_method: self.config.robustness_method,
             cv_fractions: self.config.cv_fractions,
             cv_kind: self.config.cv_kind,
@@ -414,6 +436,9 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
             dimensions: self.config.dimensions,
             distance_metric: self.config.distance_metric.clone(),
             cv_seed: self.config.cv_seed,
+            surface_mode: self.config.surface_mode,
+            interpolation_vertices: self.config.interpolation_vertices,
+            cell: self.config.cell,
             // ++++++++++++++++++++++++++++++++++++++
             // +               DEV                  +
             // ++++++++++++++++++++++++++++++++++++++

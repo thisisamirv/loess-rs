@@ -97,7 +97,9 @@
 //!     .distance_metric(Euclidean)                      // Distance metric
 //!     .weight_function(Tricube)                        // Kernel function
 //!     .robustness_method(Bisquare)                     // Outlier handling
-//!     .delta(0.01)                                     // Interpolation optimization
+//!     .surface_mode(Interpolation)                     // Surface evaluation mode
+//!     .cell(0.2)                                       // Interpolation cell size
+//!     .interpolation_vertices(1000)                    // Maximum vertices for interpolation
 //!     .zero_weight_fallback(UseLocalMean)              // Fallback policy
 //!     .auto_converge(1e-6)                             // Auto-convergence threshold
 //!     .confidence_intervals(0.95)                      // 95% confidence intervals
@@ -243,7 +245,6 @@
 //! |-------------------------------|-----------------------------------------------|----------------------|--------------------------------------------------|------------------|
 //! | **fraction**                  | 0.67 (or CV-selected)                         | (0, 1]               | Smoothing span (fraction of data used per fit)   | All              |
 //! | **iterations**                | 3                                             | [0, 1000]            | Number of robustness iterations                  | All              |
-//! | **delta**                     | 1% of x-range (Batch), 0.0 (Streaming/Online) | [0, ∞)               | Interpolation optimization threshold             | All              |
 //! | **weight_function**           | `Tricube`                                     | 7 kernel options     | Distance weighting kernel                        | All              |
 //! | **robustness_method**         | `Bisquare`                                    | 3 methods            | Outlier downweighting method                     | All              |
 //! | **zero_weight_fallback**      | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
@@ -254,6 +255,9 @@
 //! | **degree**                    | `Linear`                                      | 0, 1, 2              | Polynomial degree (constant, linear, quadratic)  | All              |
 //! | **dimensions**                | 1                                             | [1, ∞)               | Number of predictor dimensions                   | All              |
 //! | **distance_metric**           | `Euclidean`                                   | 2 metrics            | Distance metric for nD data                      | All              |
+//! | **surface_mode**              | `Interpolation`                               | 2 modes              | Surface evaluation mode (speed vs accuracy)      | All              |
+//! | **cell**                      | 0.2                                           | (0, 1]               | Interpolation cell size (smaller = higher res)   | All              |
+//! | **interpolation_vertices**    | None (no limit)                               | [1, ∞)               | Optional vertex limit for interpolation surface  | All              |
 //! | **return_diagnostics**        | false                                         | true/false           | Include RMSE, MAE, R^2, etc. in output           | Batch, Streaming |
 //! | **return_se**                 | false                                         | true/false           | Enable standard error computation                | Batch            |
 //! | **confidence_intervals**      | None                                          | 0..1 (level)         | Uncertainty in mean curve                        | Batch            |
@@ -279,6 +283,7 @@
 //! | **update_mode**          | `Incremental`, `Full`                                                              |
 //! | **degree**               | `Constant`, `Linear`, `Quadratic`, `Cubic`, `Quartic`                              |
 //! | **distance_metric**      | `Euclidean`, `Normalized`, `Chebyshev`, `Manhattan`, `Minkowski`, `Weighted`       |
+//! | **surface_mode**         | `Interpolation`, `Direct`                                                          |
 //!
 //! See the detailed sections below for guidance on choosing between these options.
 //!
@@ -546,35 +551,6 @@
 //! - **1-3**: Light to moderate robustness (recommended)
 //! - **4-6**: Strong robustness (for contaminated data)
 //! - **7+**: Very strong (may over-smooth)
-//!
-//! ### Delta (Optimization)
-//!
-//! The `delta` parameter enables interpolation optimization for large datasets.
-//! Points within `delta` distance reuse the previous fit.
-//!
-//! - **Range**: [0, ∞)
-//! - **Effect**: Larger = faster but less accurate
-//!
-//! ```rust
-//! use loess_rs::prelude::*;
-//! # let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-//! # let y = vec![2.0, 4.1, 5.9, 8.2, 9.8];
-//!
-//! // Build model with custom delta
-//! let model = Loess::new()
-//!     .fraction(0.5)
-//!     .delta(0.05)  // Custom delta value
-//!     .adapter(Batch)
-//!     .build()?;
-//!
-//! let result = model.fit(&x, &y)?;
-//! # Result::<(), LoessError>::Ok(())
-//! ```
-//!
-//! **When to use delta:**
-//! - **Large datasets** (>10,000 points): Set to ~1% of range
-//! - **Uniformly spaced data**: Can use larger values
-//! - **Irregular spacing**: Use smaller values or 0
 //!
 //! ### Weight Functions (Kernels)
 //!
@@ -900,6 +876,84 @@
 //!     .build()?;
 //!
 //! let result = model.fit(&x_2d, &y)?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
+//! ### Surface Mode
+//!
+//! Choose the surface evaluation mode for streaming data.
+//!
+//! - **`Interpolation`**:
+//!    - Fastest, but may introduce bias.
+//!    - Suitable for most cases.
+//!    - The default mode in R's and Python's loess implementations.
+//! - **`Direct`**:
+//!    - Slower, but more accurate.
+//!    - Recommended for critical applications.
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//! # let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+//! # let y = vec![2.0, 4.1, 5.9, 8.2, 9.8];
+//!
+//! let model = Loess::new()
+//!     .fraction(0.5)
+//!     .surface_mode(Direct)
+//!     .adapter(Batch)
+//!     .build()?;
+//!
+//! let result = model.fit(&x, &y)?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
+//! ### Cell Size
+//!
+//! Set the cell size for interpolation subdivision (default: 0.2, range: (0, 1]).
+//!
+//! This is a "Resolution First" approach: grid resolution is controlled by
+//! `cell`, where `effective_cell = fraction * cell`.
+//!
+//! | Cell Size | Evaluation Speed | Accuracy | Memory |
+//! |-----------|------------------|----------|--------|
+//! | Higher    | Faster           | Lower    | Less   |
+//! | Lower     | Slower           | Higher   | More   |
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//! # let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+//! # let y = vec![2.0, 4.1, 5.9, 8.2, 9.8];
+//!
+//! let model = Loess::new()
+//!     .fraction(0.5)
+//!     .cell(0.1)   // Finer grid, higher accuracy
+//!     .adapter(Batch)
+//!     .build()?;
+//!
+//! let result = model.fit(&x, &y)?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
+//! ### Interpolation Vertices
+//!
+//! Optional limit on the number of vertices for the interpolation surface.
+//!
+//! **Resolution First behavior:** By default, no limit is enforced—grid size is
+//! purely determined by `cell`. A consistency check only occurs when **both**
+//! `cell` and `interpolation_vertices` are explicitly provided by the user.
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//! # let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+//! # let y = vec![2.0, 4.1, 5.9, 8.2, 9.8];
+//!
+//! let model = Loess::new()
+//!     .fraction(0.5)
+//!     .cell(0.1)
+//!     .interpolation_vertices(1000)  // Explicit limit: consistency check applies
+//!     .adapter(Batch)
+//!     .build()?;
+//!
+//! let result = model.fit(&x, &y)?;
 //! # Result::<(), LoessError>::Ok(())
 //! ```
 //!
@@ -1387,6 +1441,7 @@ pub mod prelude {
         MergeStrategy::WeightedAverage,
         PolynomialDegree::{Constant, Cubic, Linear, Quadratic, Quartic},
         RobustnessMethod::{Bisquare, Huber, Talwar},
+        SurfaceMode::{Direct, Interpolation},
         UpdateMode::{Full, Incremental},
         WeightFunction::{Biweight, Cosine, Epanechnikov, Gaussian, Triangle, Tricube, Uniform},
         ZeroWeightFallback::{ReturnNone, ReturnOriginal, UseLocalMean},

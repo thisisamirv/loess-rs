@@ -33,7 +33,11 @@ use loess_rs::internals::primitives::errors::LoessError;
 /// Verifies that chunk_size < 10 is rejected.
 #[test]
 fn test_streaming_invalid_chunk_size() {
-    let result = Loess::<f64>::new().adapter(Streaming).chunk_size(5).build();
+    let result = Loess::<f64>::new()
+        .surface_mode(Direct)
+        .adapter(Streaming)
+        .chunk_size(5)
+        .build();
 
     assert!(
         matches!(result, Err(LoessError::InvalidChunkSize { .. })),
@@ -47,6 +51,7 @@ fn test_streaming_invalid_chunk_size() {
 #[test]
 fn test_streaming_invalid_overlap() {
     let result = Loess::<f64>::new()
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(10)
@@ -65,6 +70,7 @@ fn test_streaming_invalid_overlap() {
 fn test_streaming_invalid_fraction() {
     let result = Loess::<f64>::new()
         .fraction(0.0)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(1)
@@ -84,6 +90,7 @@ fn test_streaming_mismatched_inputs() {
     let mut processor = Loess::new()
         .fraction(0.5)
         .iterations(0)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(1)
@@ -114,6 +121,7 @@ fn test_streaming_basic_roundtrip() {
     let mut processor = Loess::new()
         .fraction(1.0) // Global linear fit => exact predictions for linear data
         .iterations(0)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(2)
@@ -156,6 +164,7 @@ fn test_streaming_multi_chunk_overlap() {
     let mut processor = Loess::new()
         .fraction(1.0)
         .iterations(0)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(2)
@@ -196,6 +205,7 @@ fn test_streaming_finalize_fresh() {
     let mut processor = Loess::new()
         .fraction(0.5)
         .iterations(0)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(2)
@@ -217,6 +227,7 @@ fn test_single_chunk_returns_all_points() {
 
     let mut processor = Loess::new()
         .fraction(0.3)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(50)
         .overlap(10)
@@ -259,6 +270,7 @@ fn test_streaming_reset() {
     let mut processor = Loess::new()
         .fraction(1.0)
         .iterations(0)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(2)
@@ -330,6 +342,7 @@ fn test_streaming_merge_strategies() {
         let mut model = Loess::<f64>::new()
             .fraction(0.2)
             .merge_strategy(strategy)
+            .surface_mode(Direct)
             .adapter(Streaming)
             .chunk_size(20)
             .overlap(10)
@@ -356,6 +369,7 @@ fn test_streaming_robustness_merge() {
         .iterations(1)
         .return_robustness_weights()
         .merge_strategy(MergeStrategy::Average)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(20)
         .overlap(10)
@@ -384,6 +398,7 @@ fn test_streaming_minimum_chunk_size() {
     let result = Loess::new()
         .fraction(0.5)
         .iterations(0)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10) // Minimum allowed
         .overlap(2)
@@ -403,6 +418,7 @@ fn test_streaming_various_overlaps() {
         let result = Loess::new()
             .fraction(0.5)
             .iterations(0)
+            .surface_mode(Direct)
             .adapter(Streaming)
             .chunk_size(10)
             .overlap(overlap)
@@ -425,6 +441,7 @@ fn test_streaming_with_robustness() {
         .fraction(0.5)
         .iterations(3)
         .robustness_method(Bisquare)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(20)
         .overlap(5)
@@ -465,6 +482,7 @@ fn test_streaming_with_residuals() {
         .fraction(0.5)
         .iterations(2)
         .return_residuals()
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(15)
         .overlap(3)
@@ -496,6 +514,7 @@ fn test_streaming_large_dataset() {
     let mut processor = Loess::new()
         .fraction(0.3)
         .iterations(1)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(100)
         .overlap(10)
@@ -546,6 +565,7 @@ fn test_streaming_with_robustness_weights() {
         .fraction(0.5)
         .iterations(2)
         .return_robustness_weights()
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(15)
         .overlap(3)
@@ -604,6 +624,7 @@ fn test_streaming_with_diagnostics() {
     let mut processor = Loess::new()
         .fraction(0.5)
         .return_diagnostics()
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(15)
         .overlap(3)
@@ -648,6 +669,7 @@ fn test_streaming_with_diagnostics() {
 fn test_streaming_chunk_exactly_overlap_plus_one() {
     let mut processor = Loess::new()
         .fraction(0.5)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(11)
         .overlap(10)
@@ -669,6 +691,7 @@ fn test_streaming_chunk_exactly_overlap_plus_one() {
 fn test_streaming_zero_overlap() {
     let mut processor = Loess::new()
         .fraction(0.5)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(0)
@@ -694,6 +717,7 @@ fn test_streaming_zero_overlap() {
 fn test_streaming_single_point_chunks() {
     // This should fail validation since chunk_size must be >= 10
     let result = Loess::<f64>::new()
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(2)
         .overlap(0)
@@ -707,6 +731,7 @@ fn test_streaming_single_point_chunks() {
 fn test_streaming_unsorted_chunks() {
     let mut processor = Loess::new()
         .fraction(0.5)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(2)
@@ -737,6 +762,7 @@ fn test_streaming_all_merge_strategies_identical_data() {
         let mut processor = Loess::new()
             .fraction(0.5)
             .merge_strategy(strategy)
+            .surface_mode(Direct)
             .adapter(Streaming)
             .chunk_size(10)
             .overlap(3)
@@ -760,6 +786,7 @@ fn test_streaming_all_merge_strategies_identical_data() {
 fn test_streaming_finalize_multiple_times() {
     let mut processor = Loess::new()
         .fraction(0.5)
+        .surface_mode(Direct)
         .adapter(Streaming)
         .chunk_size(10)
         .overlap(2)

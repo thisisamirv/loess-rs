@@ -47,7 +47,7 @@ use num_traits::Float;
 // Internal dependencies
 use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
-use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn};
+use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn, SurfaceMode};
 use crate::engine::executor::{LoessConfig, LoessExecutor};
 use crate::engine::validator::Validator;
 use crate::math::boundary::BoundaryPolicy;
@@ -82,9 +82,6 @@ pub struct OnlineLoessBuilder<T: Float> {
 
     /// Smoothing fraction (span)
     pub fraction: T,
-
-    /// Delta parameter for interpolation optimization
-    pub delta: T,
 
     /// Number of robustness iterations
     pub iterations: usize,
@@ -124,6 +121,15 @@ pub struct OnlineLoessBuilder<T: Float> {
 
     /// Distance metric for nD neighborhood computation.
     pub distance_metric: DistanceMetric<T>,
+
+    /// Cell size for interpolation subdivision (default: 0.2).
+    pub cell: Option<f64>,
+
+    /// Maximum number of vertices for interpolation.
+    pub interpolation_vertices: Option<usize>,
+
+    /// Evaluation mode (default: Interpolation)
+    pub surface_mode: SurfaceMode,
 
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
@@ -170,7 +176,6 @@ impl<T: Float> OnlineLoessBuilder<T> {
             window_capacity: 1000,
             min_points: 3,
             fraction: T::from(0.2).unwrap(),
-            delta: T::zero(),
             iterations: 1,
             weight_function: WeightFunction::default(),
             update_mode: UpdateMode::default(),
@@ -184,6 +189,9 @@ impl<T: Float> OnlineLoessBuilder<T> {
             polynomial_degree: PolynomialDegree::default(),
             dimensions: 1,
             distance_metric: DistanceMetric::default(),
+            cell: None,
+            interpolation_vertices: None,
+            surface_mode: SurfaceMode::default(),
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -207,12 +215,6 @@ impl<T: Float> OnlineLoessBuilder<T> {
     /// Set the number of robustness iterations.
     pub fn iterations(mut self, iterations: usize) -> Self {
         self.iterations = iterations;
-        self
-    }
-
-    /// Set the delta parameter for interpolation-based optimization.
-    pub fn delta(mut self, delta: T) -> Self {
-        self.delta = delta;
         self
     }
 
@@ -277,6 +279,24 @@ impl<T: Float> OnlineLoessBuilder<T> {
     /// Set the update mode for incremental processing.
     pub fn update_mode(mut self, mode: UpdateMode) -> Self {
         self.update_mode = mode;
+        self
+    }
+
+    /// Set the interpolation cell size (default: 0.2).
+    pub fn cell(mut self, cell: f64) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+
+    /// Set the maximum number of vertices for interpolation.
+    pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
+        self.interpolation_vertices = Some(vertices);
+        self
+    }
+
+    /// Set the evaluation mode (Interpolation or Direct).
+    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
+        self.surface_mode = mode;
         self
     }
 
@@ -459,21 +479,34 @@ impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
         }
 
         // Smooth using LOESS for windows of size >= 3
-        let zero_flag = self.config.zero_weight_fallback.to_u8();
 
         // Choose update strategy based on configuration
         let (smoothed, std_err, rob_weight) = match self.config.update_mode {
             UpdateMode::Incremental => {
                 // Incremental mode: use full LOESS but only return the latest point's value
-                let zero_flag = self.config.zero_weight_fallback.to_u8();
+                let n = x_vec.len() / self.config.dimensions;
+                let cell_to_use = self.config.cell.unwrap_or(0.2);
+                let limit = self.config.interpolation_vertices.unwrap_or(n);
+                let cell_provided = self.config.cell.is_some();
+                let limit_provided = self.config.interpolation_vertices.is_some();
+
+                if self.config.surface_mode == SurfaceMode::Interpolation {
+                    Validator::validate_interpolation_grid(
+                        T::from(cell_to_use).unwrap_or_else(|| T::from(0.2).unwrap()),
+                        self.config.fraction,
+                        self.config.dimensions,
+                        limit,
+                        cell_provided,
+                        limit_provided,
+                    )?;
+                }
 
                 let config = LoessConfig {
                     fraction: Some(self.config.fraction),
                     iterations: 0, // No robustness for incremental mode (speed)
-                    delta: self.config.delta,
                     weight_function: self.config.weight_function,
                     robustness_method: self.config.robustness_method,
-                    zero_weight_fallback: zero_flag,
+                    zero_weight_fallback: self.config.zero_weight_fallback,
                     boundary_policy: self.config.boundary_policy,
                     polynomial_degree: self.config.polynomial_degree,
                     dimensions: self.config.dimensions,
@@ -483,6 +516,9 @@ impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
                     cv_kind: None,
                     return_variance: None,
                     cv_seed: None,
+                    surface_mode: self.config.surface_mode,
+                    interpolation_vertices: self.config.interpolation_vertices,
+                    cell: self.config.cell,
                     custom_smooth_pass: self.config.custom_smooth_pass,
                     custom_cv_pass: self.config.custom_cv_pass,
                     custom_interval_pass: self.config.custom_interval_pass,
@@ -499,14 +535,31 @@ impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
                 (smoothed_val, None, Some(T::one()))
             }
             UpdateMode::Full => {
+                // Validate grid resolution
+                let n = x_vec.len() / self.config.dimensions;
+                let cell_to_use = self.config.cell.unwrap_or(0.2);
+                let limit = self.config.interpolation_vertices.unwrap_or(n);
+                let cell_provided = self.config.cell.is_some();
+                let limit_provided = self.config.interpolation_vertices.is_some();
+
+                if self.config.surface_mode == SurfaceMode::Interpolation {
+                    Validator::validate_interpolation_grid(
+                        T::from(cell_to_use).unwrap_or_else(|| T::from(0.2).unwrap()),
+                        self.config.fraction,
+                        self.config.dimensions,
+                        limit,
+                        cell_provided,
+                        limit_provided,
+                    )?;
+                }
+
                 // Full mode: re-smooth entire window
                 let config = LoessConfig {
                     fraction: Some(self.config.fraction),
                     iterations: self.config.iterations,
-                    delta: self.config.delta,
                     weight_function: self.config.weight_function,
                     robustness_method: self.config.robustness_method,
-                    zero_weight_fallback: zero_flag,
+                    zero_weight_fallback: self.config.zero_weight_fallback,
                     boundary_policy: self.config.boundary_policy,
                     polynomial_degree: self.config.polynomial_degree,
                     dimensions: self.config.dimensions,
@@ -516,6 +569,9 @@ impl<T: Float + Debug + Send + Sync + 'static> OnlineLoess<T> {
                     cv_kind: None,
                     return_variance: None,
                     cv_seed: None,
+                    surface_mode: self.config.surface_mode,
+                    interpolation_vertices: self.config.interpolation_vertices,
+                    cell: self.config.cell,
                     // ++++++++++++++++++++++++++++++++++++++
                     // +               DEV                  +
                     // ++++++++++++++++++++++++++++++++++++++

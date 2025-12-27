@@ -52,6 +52,7 @@ use core::fmt::Debug;
 use num_traits::Float;
 
 // Internal dependencies
+use crate::algorithms::interpolation::InterpolationSurface;
 use crate::algorithms::regression::{PolynomialDegree, RegressionContext, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::evaluation::cv::CVKind;
@@ -99,21 +100,39 @@ impl<'a, T: Float> PointDistance<T> for LoessDistanceCalculator<'a, T> {
 }
 
 // ============================================================================
+// Surface Mode
+// ============================================================================
+
+/// Mode for surface evaluation.
+///
+/// Controls whether to use interpolation surface (faster, less accurate) or
+/// direct per-point fitting (slower, more accurate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SurfaceMode {
+    /// Use interpolation surface for faster evaluation.
+    #[default]
+    Interpolation,
+
+    /// Use direct per-point fitting for maximum accuracy.
+    Direct,
+}
+
+// ============================================================================
 // Type Definitions
 // ============================================================================
 
 /// Signature for custom smooth pass function
 #[doc(hidden)]
 pub type SmoothPassFn<T> = fn(
-    &[T],           // x
-    &[T],           // y
-    usize,          // window_size
-    T,              // delta (interpolation optimization threshold)
-    bool,           // use_robustness
-    &[T],           // robustness_weights
-    &mut [T],       // output (y_smooth)
-    WeightFunction, // weight_function
-    u8,             // zero_weight_flag
+    &[T],               // x
+    &[T],               // y
+    usize,              // window_size
+    T,                  // delta (interpolation optimization threshold)
+    bool,               // use_robustness
+    &[T],               // robustness_weights
+    &mut [T],           // output (y_smooth)
+    WeightFunction,     // weight_function
+    ZeroWeightFallback, // zero_weight_flag
 );
 
 /// Signature for custom cross-validation pass function
@@ -187,14 +206,11 @@ pub struct LoessConfig<T> {
     /// Number of robustness iterations (0 means initial fit only).
     pub iterations: usize,
 
-    /// Delta parameter for linear interpolation optimization.
-    pub delta: T,
-
     /// Kernel weight function used for local regression.
     pub weight_function: WeightFunction,
 
-    /// Zero-weight fallback policy (via [`ZeroWeightFallback`]).
-    pub zero_weight_fallback: u8,
+    /// Zero-weight fallback policy.
+    pub zero_weight_fallback: ZeroWeightFallback,
 
     /// Robustness weighting method for outlier downweighting.
     pub robustness_method: RobustnessMethod,
@@ -225,6 +241,16 @@ pub struct LoessConfig<T> {
 
     /// Distance metric for nD neighborhood computation.
     pub distance_metric: DistanceMetric<T>,
+
+    /// Surface evaluation mode (Interpolation or Direct).
+    pub surface_mode: SurfaceMode,
+
+    /// Maximum number of vertices for the interpolation surface.
+    pub interpolation_vertices: Option<usize>,
+
+    /// Cell size as a fraction of the smoothing span (default: 0.2).
+    /// Used to determine subdivision when `surface_mode` is `Interpolation`.
+    pub cell: Option<f64>,
 
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
@@ -259,9 +285,8 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for LoessConfig<T> {
         Self {
             fraction: None,
             iterations: 3,
-            delta: T::zero(),
             weight_function: WeightFunction::default(),
-            zero_weight_fallback: 0,
+            zero_weight_fallback: ZeroWeightFallback::default(),
             robustness_method: RobustnessMethod::default(),
             cv_fractions: None,
             cv_kind: None,
@@ -272,6 +297,9 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for LoessConfig<T> {
             polynomial_degree: PolynomialDegree::default(),
             dimensions: 1,
             distance_metric: DistanceMetric::default(),
+            surface_mode: SurfaceMode::default(),
+            interpolation_vertices: None,
+            cell: None,
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -291,14 +319,11 @@ pub struct LoessExecutor<T: Float> {
     /// Number of robustness iterations.
     pub iterations: usize,
 
-    /// Delta for interpolation optimization.
-    pub delta: T,
-
     /// Kernel weight function.
     pub weight_function: WeightFunction,
 
-    /// Zero weight fallback flag (0=UseLocalMean, 1=ReturnOriginal, 2=ReturnNone).
-    pub zero_weight_fallback: u8,
+    /// Zero weight fallback flag.
+    pub zero_weight_fallback: ZeroWeightFallback,
 
     /// Robustness method for iterative refinement.
     pub robustness_method: RobustnessMethod,
@@ -314,6 +339,15 @@ pub struct LoessExecutor<T: Float> {
 
     /// Distance metric for nD neighborhood computation.
     pub distance_metric: DistanceMetric<T>,
+
+    /// Surface evaluation mode (Interpolation or Direct).
+    pub surface_mode: SurfaceMode,
+
+    /// Maximum number of vertices for interpolation.
+    pub interpolation_vertices: Option<usize>,
+
+    /// Cell size for interpolation subdivision.
+    pub cell: Option<f64>,
 
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
@@ -359,14 +393,16 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         Self {
             fraction: T::from(0.67).unwrap_or_else(|| T::from(0.5).unwrap()),
             iterations: 3,
-            delta: T::zero(),
-            weight_function: WeightFunction::Tricube,
-            zero_weight_fallback: 0,
-            robustness_method: RobustnessMethod::Bisquare,
+            weight_function: WeightFunction::default(),
+            zero_weight_fallback: ZeroWeightFallback::default(),
+            robustness_method: RobustnessMethod::default(),
             boundary_policy: BoundaryPolicy::default(),
             polynomial_degree: PolynomialDegree::default(),
             dimensions: 1,
             distance_metric: DistanceMetric::default(),
+            surface_mode: SurfaceMode::default(),
+            interpolation_vertices: None,
+            cell: None,
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -382,7 +418,6 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         Self::new()
             .fraction(config.fraction.unwrap_or(default_frac))
             .iterations(config.iterations)
-            .delta(config.delta)
             .weight_function(config.weight_function)
             .zero_weight_fallback(config.zero_weight_fallback)
             .robustness_method(config.robustness_method)
@@ -390,6 +425,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             .polynomial_degree(config.polynomial_degree)
             .dimensions(config.dimensions)
             .distance_metric(config.distance_metric.clone())
+            .surface_mode(config.surface_mode)
+            .interpolation_vertices(config.interpolation_vertices)
+            .cell(config.cell)
             // ++++++++++++++++++++++++++++++++++++++
             // +               DEV                  +
             // ++++++++++++++++++++++++++++++++++++++
@@ -413,12 +451,6 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         self
     }
 
-    /// Set the delta parameter for interpolation optimization.
-    pub fn delta(mut self, delta: T) -> Self {
-        self.delta = delta;
-        self
-    }
-
     /// Set the kernel weight function.
     pub fn weight_function(mut self, wf: WeightFunction) -> Self {
         self.weight_function = wf;
@@ -426,7 +458,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
     }
 
     /// Set the zero weight fallback policy flag.
-    pub fn zero_weight_fallback(mut self, flag: u8) -> Self {
+    pub fn zero_weight_fallback(mut self, flag: ZeroWeightFallback) -> Self {
         self.zero_weight_fallback = flag;
         self
     }
@@ -458,6 +490,24 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
     /// Set the distance metric for nD neighborhood computation.
     pub fn distance_metric(mut self, metric: DistanceMetric<T>) -> Self {
         self.distance_metric = metric;
+        self
+    }
+
+    /// Set the surface evaluation mode (Interpolation or Direct).
+    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
+        self.surface_mode = mode;
+        self
+    }
+
+    /// Set the maximum number of vertices for interpolation.
+    pub fn interpolation_vertices(mut self, vertices: Option<usize>) -> Self {
+        self.interpolation_vertices = vertices;
+        self
+    }
+
+    /// Set the interpolation cell size.
+    pub fn cell(mut self, cell: Option<f64>) -> Self {
+        self.cell = cell;
         self
     }
 
@@ -535,7 +585,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                         let scales = DistanceMetric::compute_normalization_scales(&mins, &maxs);
                         let kdtree = KDTree::new(train_x, dims);
 
-                        executor.predict_nd(
+                        executor.predict(
                             train_x,
                             train_y,
                             &vec![T::one(); n_train],
@@ -586,6 +636,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
     }
 
     /// Execute smoothing with explicit overrides for specific parameters.
+    ///
+    /// Uses interpolation surface for efficient evaluation - fits only at
+    /// cell vertices and interpolates for all other points.
     ///
     /// # Special Cases
     ///
@@ -639,7 +692,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             }
         }
 
-        // Build KD-Tree for efficient kNN
+        // Build KD-Tree for efficient kNN at vertices
         let kdtree = KDTree::new(&ax, dims);
 
         // Define distance calculator
@@ -648,19 +701,11 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             scales: &scales,
         };
 
-        // The neighbor indices don't change across iterations (only weights do),
-        // so we compute them once and reuse across all smoothing passes.
-        let precomputed_neighbors: Vec<Neighborhood<T>> = (0..n)
-            .map(|i| {
-                let query_offset = i * dims;
-                let query_point = &ax[query_offset..query_offset + dims];
-                kdtree.find_k_nearest(query_point, window_size, &dist_calc, None)
-            })
-            .collect();
+        // Resolution First: no default limit unless explicitly provided
+        let max_vertices = self.interpolation_vertices.unwrap_or(usize::MAX);
 
         let mut y_smooth = vec![T::zero(); n];
-        let mut robustness_weights = vec![T::one(); n];
-        let mut augmented_robustness_weights = vec![T::one(); n_total];
+        let mut robustness_weights = vec![T::one(); n_total];
         let mut residuals = vec![T::zero(); n];
 
         let mut iterations_performed = 0;
@@ -668,31 +713,64 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         for iter in 0..=target_iterations {
             iterations_performed = iter;
 
-            // Sync robustness weights to augmented points
-            if is_augmented {
-                for (i, &orig_idx) in mapping.iter().enumerate() {
-                    augmented_robustness_weights[i] = robustness_weights[orig_idx];
+            // Branch based on surface mode
+            match self.surface_mode {
+                SurfaceMode::Interpolation => {
+                    // Build interpolation surface with current robustness weights
+                    // Create fitter closure that captures regression parameters
+                    let use_robustness = iter > 0;
+                    let fitter = |vertex: &[T], neighborhood: &Neighborhood<T>| {
+                        let context = RegressionContext {
+                            x: &ax,
+                            dimensions: dims,
+                            y: &ay,
+                            query_idx: 0,
+                            query_point: Some(vertex),
+                            neighborhood,
+                            use_robustness,
+                            robustness_weights: &robustness_weights,
+                            weight_function: self.weight_function,
+                            zero_weight_fallback: self.zero_weight_fallback,
+                            polynomial_degree: self.polynomial_degree,
+                            compute_leverage: false,
+                        };
+                        context.fit().map(|(val, _)| val)
+                    };
+
+                    let surface = InterpolationSurface::build(
+                        &ax,
+                        &ay,
+                        dims,
+                        eff_fraction,
+                        &dist_calc,
+                        &kdtree,
+                        max_vertices,
+                        fitter,
+                        T::from(self.cell.unwrap_or(0.2)).unwrap_or(T::from(0.2).unwrap()),
+                    );
+
+                    // Evaluate surface at original data points only
+                    for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
+                        let query_offset = i * dims;
+                        let query_point = &ax[query_offset..query_offset + dims];
+                        *val = surface.evaluate(query_point);
+                    }
+                }
+                SurfaceMode::Direct => {
+                    // Direct per-point fitting using smooth_pass
+                    self.smooth_pass(
+                        &ax,
+                        &ay,
+                        window_size,
+                        &robustness_weights,
+                        iter > 0, // use_robustness
+                        &scales,
+                        &mut y_smooth,
+                        n, // original_n
+                        &kdtree,
+                    );
                 }
             }
-
-            // Perform smoothing pass using precomputed neighbors
-            self.smooth_pass_nd(
-                &ax,
-                &ay,
-                window_size,
-                if is_augmented {
-                    &augmented_robustness_weights
-                } else {
-                    &robustness_weights
-                },
-                iter > 0,
-                &scales,
-                &mut y_smooth,
-                None, // Compute leverage only in final pass
-                n,    // Only smooth the original points
-                Some(&kdtree),
-                Some(&precomputed_neighbors),
-            );
 
             if iter < target_iterations {
                 // Update robustness weights
@@ -713,7 +791,8 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 let mut max_change = T::zero();
 
                 for i in 0..n {
-                    let old_w = robustness_weights[i];
+                    let orig_idx = if is_augmented { mapping[i] } else { i };
+                    let old_w = robustness_weights[orig_idx];
                     let r = residuals[i] / (T::from(6.0).unwrap() * mad);
                     let new_w = if r < T::one() {
                         let tmp = T::one() - r * r;
@@ -721,7 +800,16 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                     } else {
                         T::zero()
                     };
-                    robustness_weights[i] = new_w;
+                    robustness_weights[orig_idx] = new_w;
+
+                    // Sync to augmented points if needed
+                    if is_augmented {
+                        for (aug_idx, &mapped_orig) in mapping.iter().enumerate() {
+                            if mapped_orig == orig_idx {
+                                robustness_weights[aug_idx] = new_w;
+                            }
+                        }
+                    }
 
                     let change = (new_w - old_w).abs();
                     if change > max_change {
@@ -735,29 +823,8 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             }
         }
 
-        let mut se = None;
-        if let Some(_method) = confidence_method {
-            let mut leverages = vec![T::zero(); n];
-
-            // Final pass for leverages and smooth values
-            self.smooth_pass_nd(
-                &ax,
-                &ay,
-                window_size,
-                if is_augmented {
-                    &augmented_robustness_weights
-                } else {
-                    &robustness_weights
-                },
-                target_iterations > 0,
-                &scales,
-                &mut y_smooth,
-                Some(&mut leverages),
-                n,
-                Some(&kdtree),
-                Some(&precomputed_neighbors),
-            );
-
+        // Standard errors
+        let se = if confidence_method.is_some() {
             // Estimate residual standard deviation (sigma) robustly
             for i in 0..n {
                 residuals[i] = (y[i] - y_smooth[i]).abs();
@@ -767,12 +834,20 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             let median_residual = sorted_residuals[n / 2];
             let sigma = median_residual * T::from(1.4826).unwrap();
 
-            let mut se_vec = vec![T::zero(); n];
-            for i in 0..n {
-                se_vec[i] = sigma * leverages[i].sqrt();
-            }
-            se = Some(se_vec);
-        }
+            // Approximate leverage based on fraction
+            let approx_leverage = eff_fraction / T::from(n).unwrap();
+            let se_vec: Vec<T> = (0..n).map(|_| sigma * approx_leverage.sqrt()).collect();
+            Some(se_vec)
+        } else {
+            None
+        };
+
+        // Extract robustness weights for original points only
+        let final_robustness_weights: Vec<T> = if is_augmented {
+            (0..n).map(|i| robustness_weights[mapping[i]]).collect()
+        } else {
+            robustness_weights[..n].to_vec()
+        };
 
         ExecutorOutput {
             smoothed: y_smooth,
@@ -780,7 +855,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             iterations: Some(iterations_performed),
             used_fraction: eff_fraction,
             cv_scores: None,
-            robustness_weights,
+            robustness_weights: final_robustness_weights,
         }
     }
 
@@ -792,7 +867,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
     ///
     /// This is used for out-of-sample prediction, specifically during cross-validation.
     #[allow(clippy::too_many_arguments)]
-    pub fn predict_nd(
+    pub fn predict(
         &self,
         x_train: &[T],
         y_train: &[T],
@@ -850,9 +925,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         y_pred
     }
 
-    /// Perform a single smoothing pass over all nD points.
+    /// Perform a single smoothing pass over all nD points (Direct mode).
     #[allow(clippy::too_many_arguments)]
-    fn smooth_pass_nd(
+    fn smooth_pass(
         &self,
         x: &[T],
         y: &[T],
@@ -861,10 +936,8 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         use_robustness: bool,
         scales: &[T],
         y_smooth: &mut [T],
-        mut leverages: Option<&mut [T]>,
         original_n: usize,
-        kdtree: Option<&KDTree<T>>,
-        precomputed_neighbors: Option<&[Neighborhood<T>]>,
+        kdtree: &KDTree<T>,
     ) where
         T: Float + Debug + Send + Sync + 'static,
     {
@@ -876,43 +949,27 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         };
 
         for i in 0..original_n {
-            // Helper to perform fit with a neighborhood reference
-            let do_fit = |neighborhood: &Neighborhood<T>| {
-                let context = RegressionContext {
-                    x,
-                    dimensions: dims,
-                    y,
-                    query_idx: i,
-                    query_point: None,
-                    neighborhood,
-                    use_robustness,
-                    robustness_weights,
-                    weight_function: self.weight_function,
-                    zero_weight_fallback: ZeroWeightFallback::from_u8(self.zero_weight_fallback),
-                    polynomial_degree: self.polynomial_degree,
-                    compute_leverage: leverages.is_some(),
-                };
-                context.fit()
+            let query_offset = i * dims;
+            let query_point = &x[query_offset..query_offset + dims];
+            let neighborhood = kdtree.find_k_nearest(query_point, window_size, &dist_calc, None);
+
+            let context = RegressionContext {
+                x,
+                dimensions: dims,
+                y,
+                query_idx: i,
+                query_point: None,
+                neighborhood: &neighborhood,
+                use_robustness,
+                robustness_weights,
+                weight_function: self.weight_function,
+                zero_weight_fallback: self.zero_weight_fallback,
+                polynomial_degree: self.polynomial_degree,
+                compute_leverage: false,
             };
 
-            // Use precomputed neighbors (zero-copy) or query KD-Tree (owned)
-            let result = if let Some(neighbors) = precomputed_neighbors {
-                do_fit(&neighbors[i])
-            } else {
-                // KD-tree must be provided when precomputed neighbors aren't available
-                let tree = kdtree
-                    .expect("KD-tree must be provided when precomputed neighbors aren't available");
-                let query_offset = i * dims;
-                let query_point = &x[query_offset..query_offset + dims];
-                let neighborhood = tree.find_k_nearest(query_point, window_size, &dist_calc, None);
-                do_fit(&neighborhood)
-            };
-
-            if let Some((val, leverage)) = result {
+            if let Some((val, _)) = context.fit() {
                 y_smooth[i] = val;
-                if let Some(ref mut lev_slice) = leverages {
-                    lev_slice[i] = leverage;
-                }
             } else {
                 y_smooth[i] = y[i];
             }

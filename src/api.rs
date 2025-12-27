@@ -48,6 +48,7 @@ pub use crate::adapters::online::UpdateMode;
 pub use crate::adapters::streaming::MergeStrategy;
 pub use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 pub use crate::algorithms::robustness::RobustnessMethod;
+pub use crate::engine::executor::SurfaceMode;
 pub use crate::engine::output::LoessResult;
 pub use crate::evaluation::cv::{KFold, LOOCV};
 pub use crate::math::boundary::BoundaryPolicy;
@@ -69,9 +70,6 @@ pub struct LoessBuilder<T> {
 
     /// Robustness iterations.
     pub iterations: Option<usize>,
-
-    /// Threshold for skipping fitting (delta-optimization).
-    pub delta: Option<T>,
 
     /// Kernel weight function.
     pub weight_function: Option<WeightFunction>,
@@ -136,6 +134,15 @@ pub struct LoessBuilder<T> {
     /// Distance metric for nD neighborhood computation.
     pub distance_metric: Option<DistanceMetric<T>>,
 
+    /// Surface evaluation mode (Interpolation or Direct).
+    pub surface_mode: Option<SurfaceMode>,
+
+    /// Cell size for interpolation subdivision (default: 0.2).
+    pub cell: Option<T>,
+
+    /// Maximum number of vertices for interpolation.
+    pub interpolation_vertices: Option<usize>,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -184,7 +191,6 @@ impl<T: Float> LoessBuilder<T> {
         Self {
             fraction: None,
             iterations: None,
-            delta: None,
             weight_function: None,
             robustness_method: None,
             interval_type: None,
@@ -206,6 +212,9 @@ impl<T: Float> LoessBuilder<T> {
             polynomial_degree: None,
             dimensions: None,
             distance_metric: None,
+            surface_mode: None,
+            cell: None,
+            interpolation_vertices: None,
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -302,15 +311,6 @@ impl<T: Float> LoessBuilder<T> {
             self.duplicate_param = Some("iterations");
         }
         self.iterations = Some(iterations);
-        self
-    }
-
-    /// Set the delta parameter for interpolation-based optimization.
-    pub fn delta(mut self, delta: T) -> Self {
-        if self.delta.is_some() {
-            self.duplicate_param = Some("delta");
-        }
-        self.delta = Some(delta);
         self
     }
 
@@ -443,6 +443,33 @@ impl<T: Float> LoessBuilder<T> {
         self
     }
 
+    /// Set the surface evaluation mode (Interpolation or Direct).
+    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
+        if self.surface_mode.is_some() {
+            self.duplicate_param = Some("surface_mode");
+        }
+        self.surface_mode = Some(mode);
+        self
+    }
+
+    /// Set the interpolation cell size (default: 0.2).
+    pub fn cell(mut self, cell: T) -> Self {
+        if self.cell.is_some() {
+            self.duplicate_param = Some("cell");
+        }
+        self.cell = Some(cell);
+        self
+    }
+
+    /// Set the maximum number of vertices for interpolation.
+    pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
+        if self.interpolation_vertices.is_some() {
+            self.duplicate_param = Some("interpolation_vertices");
+        }
+        self.interpolation_vertices = Some(vertices);
+        self
+    }
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -508,9 +535,6 @@ impl<T: Float> LoessAdapter<T> for Batch {
         if let Some(iterations) = builder.iterations {
             result.iterations = iterations;
         }
-        if let Some(delta) = builder.delta {
-            result.delta = Some(delta);
-        }
         if let Some(wf) = builder.weight_function {
             result.weight_function = wf;
         }
@@ -554,6 +578,15 @@ impl<T: Float> LoessAdapter<T> for Batch {
         }
         if let Some(dm) = builder.distance_metric {
             result.distance_metric = dm;
+        }
+        if let Some(cell) = builder.cell {
+            result.cell = Some(cell.to_f64().unwrap());
+        }
+        if let Some(iv) = builder.interpolation_vertices {
+            result.interpolation_vertices = Some(iv);
+        }
+        if let Some(sm) = builder.surface_mode {
+            result.surface_mode = sm;
         }
 
         // ++++++++++++++++++++++++++++++++++++++
@@ -604,9 +637,6 @@ impl<T: Float> LoessAdapter<T> for Streaming {
         if let Some(iterations) = builder.iterations {
             result.iterations = iterations;
         }
-        if let Some(delta) = builder.delta {
-            result.delta = delta;
-        }
         if let Some(wf) = builder.weight_function {
             result.weight_function = wf;
         }
@@ -643,6 +673,15 @@ impl<T: Float> LoessAdapter<T> for Streaming {
         }
         if let Some(dm) = builder.distance_metric {
             result.distance_metric = dm;
+        }
+        if let Some(cell) = builder.cell {
+            result.cell = Some(cell.to_f64().unwrap());
+        }
+        if let Some(iv) = builder.interpolation_vertices {
+            result.interpolation_vertices = Some(iv);
+        }
+        if let Some(sm) = builder.surface_mode {
+            result.surface_mode = sm;
         }
 
         // ++++++++++++++++++++++++++++++++++++++
@@ -693,9 +732,6 @@ impl<T: Float> LoessAdapter<T> for Online {
         if let Some(iterations) = builder.iterations {
             result.iterations = iterations;
         }
-        if let Some(delta) = builder.delta {
-            result.delta = delta;
-        }
         if let Some(wf) = builder.weight_function {
             result.weight_function = wf;
         }
@@ -729,6 +765,15 @@ impl<T: Float> LoessAdapter<T> for Online {
         }
         if let Some(dm) = builder.distance_metric {
             result.distance_metric = dm;
+        }
+        if let Some(cell) = builder.cell {
+            result.cell = Some(cell.to_f64().unwrap());
+        }
+        if let Some(iv) = builder.interpolation_vertices {
+            result.interpolation_vertices = Some(iv);
+        }
+        if let Some(sm) = builder.surface_mode {
+            result.surface_mode = sm;
         }
 
         // ++++++++++++++++++++++++++++++++++++++
