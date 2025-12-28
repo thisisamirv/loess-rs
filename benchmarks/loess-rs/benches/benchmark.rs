@@ -425,38 +425,6 @@ fn bench_pathological(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_weight_functions(c: &mut Criterion) {
-    let mut group = c.benchmark_group("weight_functions");
-    group.sample_size(100);
-
-    let size = 5000;
-    let (x, y) = generate_sine_data(size, 42);
-
-    let weight_fns = [
-        ("tricube", Tricube),
-        ("gaussian", Gaussian),
-        ("epanechnikov", Epanechnikov),
-    ];
-
-    for (name, wf) in weight_fns {
-        group.bench_with_input(BenchmarkId::new("kernel", name), &wf, |b, &wf| {
-            b.iter(|| {
-                Loess::new()
-                    .fraction(0.2)
-                    .iterations(3)
-                    .weight_function(wf)
-                    .surface_mode(Interpolation)
-                    .adapter(Batch)
-                    .build()
-                    .unwrap()
-                    .fit(black_box(&x), black_box(&y))
-                    .unwrap()
-            })
-        });
-    }
-    group.finish();
-}
-
 fn bench_polynomial_degrees(c: &mut Criterion) {
     let mut group = c.benchmark_group("polynomial_degrees");
     group.sample_size(50);
@@ -466,9 +434,10 @@ fn bench_polynomial_degrees(c: &mut Criterion) {
 
     // Test higher degree polynomials
     let degrees = [
+        ("constant", Constant),
         ("linear", Linear),
         ("quadratic", Quadratic),
-        ("cubic", Cubic),
+        // ("cubic", Cubic),
         // Quartic is significantly more expensive, uncomment if needed
         // ("quartic", Quartic),
     ];
@@ -550,44 +519,6 @@ fn bench_dimensions(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_distance_metrics(c: &mut Criterion) {
-    let mut group = c.benchmark_group("distance_metrics");
-    group.sample_size(50);
-
-    let size = 2000;
-    // Use 2D data to make distance metrics more interesting
-    let (x, y) = generate_2d_data(size, 42);
-
-    let metrics = [
-        ("euclidean", Euclidean),
-        ("manhattan", Manhattan),
-        ("chebyshev", Chebyshev),
-        ("minkowski_3", Minkowski(3.0)),
-    ];
-
-    for (name, metric) in metrics {
-        group.bench_with_input(BenchmarkId::new("metric", name), &metric, |b, metric| {
-            // Clone metric because we pass it by ref but builder takes ownership or copy
-            // Metric is usually Clone
-            let m = metric.clone();
-            b.iter(|| {
-                Loess::new()
-                    .dimensions(2)
-                    .fraction(0.3)
-                    .iterations(0)
-                    .distance_metric(m.clone())
-                    .surface_mode(Interpolation)
-                    .adapter(Batch)
-                    .build()
-                    .unwrap()
-                    .fit(black_box(&x), black_box(&y))
-                    .unwrap()
-            })
-        });
-    }
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_scalability,
@@ -597,13 +528,8 @@ criterion_group!(
     bench_scientific,
     bench_genomic,
     bench_pathological,
-    bench_weight_functions,
     bench_polynomial_degrees,
     bench_dimensions,
-    bench_distance_metrics,
-    bench_polynomial_degrees,
-    bench_dimensions,
-    bench_distance_metrics,
 );
 
 criterion_main!(benches);

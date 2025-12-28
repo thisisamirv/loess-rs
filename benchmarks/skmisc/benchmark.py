@@ -494,10 +494,8 @@ def main():
     all_results["scientific"] = benchmark_scientific(iterations)
     all_results["genomic"] = benchmark_genomic(iterations)
     all_results["pathological"] = benchmark_pathological(iterations)
-    # weight_functions skipped as skmisc/R loess only uses Tricube (standard)
     all_results["polynomial_degrees"] = benchmark_polynomial_degrees(iterations)
     all_results["dimensions"] = benchmark_dimensions(iterations)
-    # distance metrics skipped as standard loess uses Euclidean (normalized)
     
     # Convert to JSON-serializable format
     output = {}
