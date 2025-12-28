@@ -166,25 +166,18 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let mut pi: Vec<usize> = (0..n).collect();
 
         // Cleveland's subdivision parameters:
-        // fc = floor(n * cell * span) - minimum points per leaf cell
-        // fd = cell * data_diameter - minimum cell diameter
+        // new_cell = span * cell
+        // Then: fc = floor(n * new_cell) = floor(n * span * cell)
         let fc = (T::from(n).unwrap() * cell_size * fraction)
             .floor()
             .to_usize()
             .unwrap_or(1)
             .max(1);
 
-        // Compute data diameter (diagonal of bounding box)
-        let mut data_diameter_sq = T::zero();
-        for d in 0..dimensions {
-            let range = upper[d] - lower[d];
-            data_diameter_sq = data_diameter_sq + range * range;
-        }
-        let data_diameter = data_diameter_sq.sqrt();
-        let fd = cell_size * data_diameter;
+        // Disable the minimum cell diameter check
+        let fd = T::zero();
 
         // Subdivide cells using Cleveland's stopping criteria
-        // Pass pi array for O(1) point counting via partitioning
         Self::subdivide_cells(
             &mut cells,
             &mut vertices,
@@ -194,7 +187,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             dimensions,
             max_vertices,
             fc, // min points per cell
-            fd, // min cell diameter
+            fd, // min cell diameter (0 = disabled)
         );
 
         // Fit at each vertex
