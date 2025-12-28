@@ -37,6 +37,7 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 // External dependencies
+use core::marker::PhantomData;
 use num_traits::Float;
 
 // Internal dependencies
@@ -105,69 +106,220 @@ impl PolynomialDegree {
     }
 
     /// Build polynomial terms for a point relative to center.
-    pub fn build_terms<T: Float>(&self, point: &[T], center: &[T], terms: &mut Vec<T>) {
-        terms.clear();
+    pub fn build_terms<T: Float>(&self, point: &[T], center: &[T], terms: &mut [T]) -> usize {
         let d = point.len();
+        let degree = self.value();
 
         // Intercept
-        terms.push(T::one());
-
-        if *self == PolynomialDegree::Constant {
-            return;
+        terms[0] = T::one();
+        if degree == 0 {
+            return 1;
         }
 
-        // Precompute centered values to avoid repetitive substraction
-        // We'll store them in a temporary stack buffer if small, but here vec is acceptable.
-        // Or just map.
-        let centered: Vec<T> = point
-            .iter()
-            .zip(center.iter())
-            .map(|(&p, &c)| p - c)
-            .collect();
-
-        // Linear terms
-        for &val in &centered {
-            terms.push(val);
+        // Special case 1D for speed
+        if d == 1 {
+            let x = point[0] - center[0];
+            terms[1] = x;
+            if degree == 1 {
+                return 2;
+            }
+            terms[2] = x * x;
+            if degree == 2 {
+                return 3;
+            }
+            terms[3] = x * x * x;
+            if degree == 3 {
+                return 4;
+            }
+            terms[4] = x * x * x * x;
+            return 5;
         }
 
-        if *self == PolynomialDegree::Linear {
-            return;
+        // Special case 2D for speed
+        if d == 2 {
+            let x = point[0] - center[0];
+            let y = point[1] - center[1];
+            terms[1] = x;
+            terms[2] = y;
+            if degree == 1 {
+                return 3;
+            }
+
+            // Quadratic: x^2, xy, y^2
+            terms[3] = x * x;
+            terms[4] = x * y;
+            terms[5] = y * y;
+            if degree == 2 {
+                return 6;
+            }
+
+            // Cubic: x^3, x^2y, xy^2, y^3
+            terms[6] = x * x * x;
+            terms[7] = x * x * y;
+            terms[8] = x * y * y;
+            terms[9] = y * y * y;
+            if degree == 3 {
+                return 10;
+            }
+
+            // Quartic: x^4, x^3y, x^2y^2, xy^3, y^4
+            terms[10] = x * x * x * x;
+            terms[11] = x * x * x * y;
+            terms[12] = x * x * y * y;
+            terms[13] = x * y * y * y;
+            terms[14] = y * y * y * y;
+            return 15;
         }
 
-        // Quadratic terms
+        // General nD case
+        let mut count = 1;
+
+        // Linear terms (and store centered values for higher degrees)
+        for i in 0..d {
+            let val = point[i] - center[i];
+            terms[count] = val;
+            count += 1;
+        }
+
+        if degree == 1 {
+            return count;
+        }
+
+        // Quadratic
         for i in 0..d {
             for j in i..d {
-                terms.push(centered[i] * centered[j]);
+                terms[count] = terms[1 + i] * terms[1 + j];
+                count += 1;
             }
         }
-
-        if *self == PolynomialDegree::Quadratic {
-            return;
+        if degree == 2 {
+            return count;
         }
 
-        // Cubic terms
+        // Cubic
         for i in 0..d {
             for j in i..d {
                 for k in j..d {
-                    terms.push(centered[i] * centered[j] * centered[k]);
+                    terms[count] = terms[1 + i] * terms[1 + j] * terms[1 + k];
+                    count += 1;
                 }
             }
         }
-
-        if *self == PolynomialDegree::Cubic {
-            return;
+        if degree == 3 {
+            return count;
         }
 
-        // Quartic terms
+        // Quartic
         for i in 0..d {
             for j in i..d {
                 for k in j..d {
                     for l in k..d {
-                        terms.push(centered[i] * centered[j] * centered[k] * centered[l]);
+                        terms[count] = terms[1 + i] * terms[1 + j] * terms[1 + k] * terms[1 + l];
+                        count += 1;
                     }
                 }
             }
         }
+        count
+    }
+}
+
+// ============================================================================
+// Term Generators (Strategy Pattern)
+// ============================================================================
+
+/// Trait for generating polynomial terms for a given point.
+/// This abstracts the dimensionality and degree logic from the solver.
+pub trait TermGenerator<T: Float> {
+    /// Returns the number of coefficients (terms) generated.
+    fn n_coeffs(&self) -> usize;
+
+    /// Generates terms for a single point relative to the query point.
+    /// Writes terms into `out`, which must have length >= `n_coeffs()`.
+    ///
+    /// `point`: The predictor values of the neighbor.
+    /// `query`: The predictor values of the query point.
+    /// `out`: The output buffer for terms.
+    fn generate(&self, point: &[T], query: &[T], out: &mut [T]);
+}
+
+/// Generator for N-dimensional generic polynomial terms.
+pub struct GenericTermGenerator<'a, T: Float> {
+    degree: PolynomialDegree,
+    _d: usize,
+    n_coeffs: usize,
+    _phantom: PhantomData<&'a T>,
+}
+
+impl<'a, T: Float> GenericTermGenerator<'a, T> {
+    /// Create a new generic term generator.
+    pub fn new(degree: PolynomialDegree, d: usize, n_coeffs: usize) -> Self {
+        Self {
+            degree,
+            _d: d,
+            n_coeffs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, T: Float> TermGenerator<T> for GenericTermGenerator<'a, T> {
+    #[inline(always)]
+    fn n_coeffs(&self) -> usize {
+        self.n_coeffs
+    }
+
+    #[inline(always)]
+    fn generate(&self, point: &[T], query: &[T], out: &mut [T]) {
+        self.degree.build_terms(point, query, out);
+    }
+}
+
+/// Specialized Generator for 1D Linear (Terms: 1, x).
+pub struct Linear1DTermGenerator;
+impl<T: Float> TermGenerator<T> for Linear1DTermGenerator {
+    #[inline(always)]
+    fn n_coeffs(&self) -> usize {
+        2
+    }
+
+    #[inline(always)]
+    fn generate(&self, point: &[T], query: &[T], out: &mut [T]) {
+        out[0] = T::one();
+        out[1] = point[0] - query[0];
+    }
+}
+
+/// Specialized Generator for 2D Linear (Terms: 1, x, y).
+pub struct Linear2DTermGenerator;
+impl<T: Float> TermGenerator<T> for Linear2DTermGenerator {
+    #[inline(always)]
+    fn n_coeffs(&self) -> usize {
+        3
+    }
+
+    #[inline(always)]
+    fn generate(&self, point: &[T], query: &[T], out: &mut [T]) {
+        out[0] = T::one();
+        out[1] = point[0] - query[0];
+        out[2] = point[1] - query[1];
+    }
+}
+
+/// Specialized Generator for 3D Linear (Terms: 1, x, y, z).
+pub struct Linear3DTermGenerator;
+impl<T: Float> TermGenerator<T> for Linear3DTermGenerator {
+    #[inline(always)]
+    fn n_coeffs(&self) -> usize {
+        4
+    }
+
+    #[inline(always)]
+    fn generate(&self, point: &[T], query: &[T], out: &mut [T]) {
+        out[0] = T::one();
+        out[1] = point[0] - query[0];
+        out[2] = point[1] - query[1];
+        out[3] = point[2] - query[2];
     }
 }
 
@@ -216,6 +368,27 @@ impl ZeroWeightFallback {
 // Regression Context
 // ============================================================================
 
+/// Persistent buffers for local regression to avoid allocations.
+pub struct FittingBuffer<T: Float> {
+    /// Weights for each neighbor.
+    pub weights: Vec<T>,
+    /// Normal matrix X'WX.
+    pub xtw_x: Vec<T>,
+    /// Normal vector X'WY.
+    pub xtw_y: Vec<T>,
+}
+
+impl<T: Float> FittingBuffer<T> {
+    /// Create a new fitting buffer with estimated capacities.
+    pub fn new(k: usize, n_coeffs: usize) -> Self {
+        Self {
+            weights: Vec::with_capacity(k),
+            xtw_x: Vec::with_capacity(n_coeffs * n_coeffs),
+            xtw_y: Vec::with_capacity(n_coeffs),
+        }
+    }
+}
+
 /// Context containing all data needed to fit a single point (unified 1D/nD).
 pub struct RegressionContext<'a, T: Float> {
     /// Flattened array of predictor values.
@@ -256,15 +429,17 @@ pub struct RegressionContext<'a, T: Float> {
 
     /// Whether to compute and return leverage.
     pub compute_leverage: bool,
+    /// Optional persistent buffer for reuse.
+    pub buffer: Option<&'a mut FittingBuffer<T>>,
 }
 
 // ============================================================================
 // WLS Fitting (Unified)
 // ============================================================================
 
-impl<'a, T: Float> RegressionContext<'a, T> {
+impl<'a, T: Float + 'static> RegressionContext<'a, T> {
     /// Returns the (predicted value, leverage) at the query point.
-    pub fn fit(&self) -> Option<(T, T)> {
+    pub fn fit(&mut self) -> Option<(T, T)> {
         let n_neighbors = self.neighborhood.len();
         if n_neighbors == 0 {
             return None;
@@ -283,34 +458,6 @@ impl<'a, T: Float> RegressionContext<'a, T> {
                 T::zero()
             };
             return Some((val, leverage));
-        }
-
-        // Compute final weights (kernel × robustness)
-        let mut weights = Vec::with_capacity(n_neighbors);
-        for i in 0..n_neighbors {
-            let neighbor_idx = self.neighborhood.indices[i];
-            let dist = self.neighborhood.distances[i];
-
-            // Normalize distance by bandwidth
-            let u = dist / max_distance;
-
-            // Kernel weight
-            let kernel_w = self.weight_function.compute_weight(u);
-
-            // Combined weight
-            let w = if self.use_robustness {
-                kernel_w * self.robustness_weights[neighbor_idx]
-            } else {
-                kernel_w
-            };
-
-            weights.push(w);
-        }
-
-        // Check numerical stability of weights
-        let weight_sum: T = weights.iter().copied().fold(T::zero(), |a, b| a + b);
-        if weight_sum <= T::epsilon() {
-            return self.handle_zero_weights();
         }
 
         // Get query point coordinates
@@ -332,8 +479,76 @@ impl<'a, T: Float> RegressionContext<'a, T> {
             return Some((val, leverage));
         }
 
-        // Build and solve WLS system
-        self.fit_polynomial_wls(&weights, query_point, n_coeffs)
+        let mut buffer = self.buffer.take();
+        let result = if let Some(ref mut buf) = buffer {
+            buf.weights.clear();
+            let weights = &mut buf.weights;
+
+            for i in 0..n_neighbors {
+                let neighbor_idx = self.neighborhood.indices[i];
+                let dist = self.neighborhood.distances[i];
+                let u = dist / max_distance;
+                let kernel_w = self.weight_function.compute_weight(u);
+                let w = if self.use_robustness {
+                    kernel_w * self.robustness_weights[neighbor_idx]
+                } else {
+                    kernel_w
+                };
+                weights.push(w);
+            }
+
+            // Check numerical stability of weights
+            let weight_sum: T = weights.iter().copied().fold(T::zero(), |a, b| a + b);
+            if weight_sum <= T::epsilon() {
+                self.buffer = buffer;
+                return self.handle_zero_weights();
+            }
+
+            buf.xtw_x.resize(n_coeffs * n_coeffs, T::zero());
+            buf.xtw_y.resize(n_coeffs, T::zero());
+
+            self.fit_polynomial_wls_internal(
+                weights,
+                query_point,
+                n_coeffs,
+                &mut buf.xtw_x,
+                &mut buf.xtw_y,
+            )
+        } else {
+            let mut weights = Vec::with_capacity(n_neighbors);
+            for i in 0..n_neighbors {
+                let neighbor_idx = self.neighborhood.indices[i];
+                let dist = self.neighborhood.distances[i];
+                let u = dist / max_distance;
+                let kernel_w = self.weight_function.compute_weight(u);
+                let w = if self.use_robustness {
+                    kernel_w * self.robustness_weights[neighbor_idx]
+                } else {
+                    kernel_w
+                };
+                weights.push(w);
+            }
+
+            // Check numerical stability of weights
+            let weight_sum: T = weights.iter().copied().fold(T::zero(), |a, b| a + b);
+            if weight_sum <= T::epsilon() {
+                self.buffer = buffer;
+                return self.handle_zero_weights();
+            }
+
+            let mut xtw_x = vec![T::zero(); n_coeffs * n_coeffs];
+            let mut xtw_y = vec![T::zero(); n_coeffs];
+
+            self.fit_polynomial_wls_internal(
+                &weights,
+                query_point,
+                n_coeffs,
+                &mut xtw_x,
+                &mut xtw_y,
+            )
+        };
+        self.buffer = buffer;
+        result
     }
 
     /// Handle zero weight cases using fallback policy.
@@ -402,72 +617,193 @@ impl<'a, T: Float> RegressionContext<'a, T> {
         (val, sum_w)
     }
 
-    /// Fit polynomial via weighted least squares.
-    fn fit_polynomial_wls(
+    /// Internal WLS solver that uses the unified TermGenerator architecture.
+    fn fit_polynomial_wls_internal(
         &self,
         weights: &[T],
         query_point: &[T],
         n_coeffs: usize,
+        xtw_x: &mut [T],
+        xtw_y: &mut [T],
     ) -> Option<(T, T)> {
+        let n_neighbors = self.neighborhood.len();
+
+        // Need at least as many neighbors as coefficients for a proper fit
+        if n_neighbors < n_coeffs {
+            // Compute weighted mean using provided weights
+            let mut sum_w = T::zero();
+            let mut sum_wy = T::zero();
+
+            for (i, &w) in weights.iter().enumerate().take(n_neighbors) {
+                let neighbor_idx = self.neighborhood.indices[i];
+                let y_val = self.y[neighbor_idx];
+                sum_w = sum_w + w;
+                sum_wy = sum_wy + w * y_val;
+            }
+
+            let val = if sum_w > T::epsilon() {
+                sum_wy / sum_w
+            } else {
+                // Fallback to simple mean
+                let n = T::from(n_neighbors).unwrap();
+                let mut sum = T::zero();
+                for i in 0..n_neighbors {
+                    let neighbor_idx = self.neighborhood.indices[i];
+                    let y_val = self.y[neighbor_idx];
+                    sum = sum + y_val;
+                }
+                sum / n
+            };
+            let leverage = if sum_w > T::epsilon() {
+                T::one() / sum_w
+            } else {
+                T::zero()
+            };
+            return Some((val, leverage));
+        }
+
+        // 1. Accumulate Normal Equations
+        match (self.dimensions, self.polynomial_degree) {
+            (1, PolynomialDegree::Linear) => {
+                self.accumulate_normal_equations(
+                    weights,
+                    Linear1DTermGenerator,
+                    query_point,
+                    xtw_x,
+                    xtw_y,
+                );
+            }
+            (2, PolynomialDegree::Linear) => {
+                self.accumulate_normal_equations(
+                    weights,
+                    Linear2DTermGenerator,
+                    query_point,
+                    xtw_x,
+                    xtw_y,
+                );
+            }
+            (3, PolynomialDegree::Linear) => {
+                self.accumulate_normal_equations(
+                    weights,
+                    Linear3DTermGenerator,
+                    query_point,
+                    xtw_x,
+                    xtw_y,
+                );
+            }
+            _ => {
+                let term_gen =
+                    GenericTermGenerator::new(self.polynomial_degree, self.dimensions, n_coeffs);
+                self.accumulate_normal_equations(weights, term_gen, query_point, xtw_x, xtw_y);
+            }
+        }
+
+        // 2. Solve the System using generic solver
+        let beta = LinearSolver::solve_symmetric(xtw_x, xtw_y, n_coeffs);
+
+        if let Some(coeffs) = beta {
+            let leverage = if self.compute_leverage {
+                // Solve A * x = e1 to get (A^-1)_00
+                // Simply solve against [1, 0, ... 0]
+                let mut e1 = vec![T::zero(); n_coeffs];
+                e1[0] = T::one();
+
+                LinearSolver::solve_symmetric(xtw_x, &e1, n_coeffs)
+                    .map(|x| x[0])
+                    .unwrap_or(T::zero())
+            } else {
+                T::zero()
+            };
+
+            return Some((coeffs[0], leverage));
+        }
+
+        // Fallback or Singularity Handling: use provided weights
+        let mut sum_w = T::zero();
+        let mut sum_wy = T::zero();
+        let n_neighbors = self.neighborhood.len();
+
+        for (i, &w) in weights.iter().enumerate().take(n_neighbors) {
+            let neighbor_idx = self.neighborhood.indices[i];
+            let y_val = self.y[neighbor_idx];
+            sum_w = sum_w + w;
+            sum_wy = sum_wy + w * y_val;
+        }
+
+        if sum_w > T::epsilon() {
+            let val = sum_wy / sum_w;
+            let leverage = T::one() / sum_w;
+            Some((val, leverage))
+        } else {
+            self.handle_zero_weights()
+        }
+    }
+
+    /// Helper to accumulate Normal Equations using a Generator.
+    fn accumulate_normal_equations<G: TermGenerator<T>>(
+        &self,
+        weights: &[T],
+        generator: G,
+        query: &[T],
+        xtwx: &mut [T],
+        xtwy: &mut [T],
+    ) {
+        let n_coeffs = generator.n_coeffs();
         let n_neighbors = self.neighborhood.len();
         let d = self.dimensions;
 
-        // Need at least as many neighbors as coefficients
-        if n_neighbors < n_coeffs {
-            let (val, sum_w) = self.weighted_mean_and_sum();
-            return Some((
-                val,
-                if sum_w > T::epsilon() {
-                    T::one() / sum_w
-                } else {
-                    T::zero()
-                },
-            ));
+        // Small stack buffer for terms
+        const STACK_BUF_SIZE: usize = 64;
+        let mut stack_terms = [T::zero(); STACK_BUF_SIZE];
+        let mut heap_terms: Vec<T>;
+
+        let terms_buf = if n_coeffs <= STACK_BUF_SIZE {
+            &mut stack_terms[0..n_coeffs]
+        } else {
+            heap_terms = vec![T::zero(); n_coeffs];
+            &mut heap_terms
+        };
+
+        // Clear accumulators
+        for x in xtwx.iter_mut() {
+            *x = T::zero();
+        }
+        for y in xtwy.iter_mut() {
+            *y = T::zero();
         }
 
-        // Build XᵀWX and XᵀWy
-        let mut xtw_x = vec![T::zero(); n_coeffs * n_coeffs];
-        let mut xtw_y = vec![T::zero(); n_coeffs];
-        let mut terms = Vec::with_capacity(n_coeffs);
-
-        for (i, &neighbor_idx) in self.neighborhood.indices.iter().enumerate() {
-            let w = weights[i];
+        for (i, &w) in weights.iter().enumerate().take(n_neighbors) {
             if w <= T::epsilon() {
                 continue;
             }
 
+            let neighbor_idx = self.neighborhood.indices[i];
+
             let offset = neighbor_idx * d;
-            let neighbor_point = &self.x[offset..offset + d];
-            let y_val = self.y[neighbor_idx];
+            let (point, y_val) = (&self.x[offset..offset + d], self.y[neighbor_idx]);
 
-            self.polynomial_degree
-                .build_terms(neighbor_point, query_point, &mut terms);
+            generator.generate(point, query, terms_buf);
 
+            // Accumulate
             for j in 0..n_coeffs {
-                xtw_y[j] = xtw_y[j] + w * terms[j] * y_val;
-                for k in j..n_coeffs {
-                    let val = w * terms[j] * terms[k];
-                    xtw_x[j * n_coeffs + k] = xtw_x[j * n_coeffs + k] + val;
-                    if k != j {
-                        xtw_x[k * n_coeffs + j] = xtw_x[k * n_coeffs + j] + val;
-                    }
+                let term_j = terms_buf[j];
+                xtwy[j] = xtwy[j] + w * y_val * term_j;
+
+                for (k, &term_k) in terms_buf.iter().enumerate().skip(j).take(n_coeffs - j) {
+                    let idx = j * n_coeffs + k; // Row-major upper triangle index
+                    xtwx[idx] = xtwx[idx] + w * term_j * term_k;
                 }
             }
         }
 
-        // Solve linear system
-        let beta = LinearSolver::solve_symmetric(&xtw_x, &xtw_y, n_coeffs)?;
-
-        let leverage = if self.compute_leverage {
-            let mut e1 = vec![T::zero(); n_coeffs];
-            e1[0] = T::one();
-            let v = LinearSolver::solve_symmetric(&xtw_x, &e1, n_coeffs)?;
-            v[0]
-        } else {
-            T::zero()
-        };
-
-        Some((beta[0], leverage))
+        // Symmetrize
+        for j in 0..n_coeffs {
+            for k in j + 1..n_coeffs {
+                let upper = j * n_coeffs + k;
+                let lower = k * n_coeffs + j;
+                xtwx[lower] = xtwx[upper];
+            }
+        }
     }
 }
 

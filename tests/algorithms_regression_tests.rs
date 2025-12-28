@@ -45,7 +45,7 @@ fn compute_weighted_sum<T: Float>(values: &[T], weights: &[T], left: usize, righ
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fit_1d_helper<T: Float + std::fmt::Debug>(
+fn fit_1d_helper<T: Float + std::fmt::Debug + 'static>(
     x: &[T],
     y: &[T],
     idx: usize,
@@ -82,7 +82,7 @@ fn fit_1d_helper<T: Float + std::fmt::Debug>(
         max_distance: max_dist,
     };
 
-    let ctx = RegressionContext {
+    let mut ctx = RegressionContext {
         x,
         dimensions: 1,
         y,
@@ -95,12 +95,13 @@ fn fit_1d_helper<T: Float + std::fmt::Debug>(
         zero_weight_fallback,
         polynomial_degree,
         compute_leverage: false,
+        buffer: None,
     };
 
     ctx.fit().map(|(v, _)| v)
 }
 
-fn local_wls_helper<T: Float + std::fmt::Debug>(
+fn local_wls_helper<T: Float + std::fmt::Debug + 'static>(
     x: &[T],
     y: &[T],
     weights: &[T],
@@ -145,7 +146,7 @@ fn local_wls_helper<T: Float + std::fmt::Debug>(
     // Wait, typical usages pass `weights` as a slice matching x?
     // See `test_local_wls_degenerate_bandwidth`: weights len = x len.
 
-    let ctx = RegressionContext {
+    let mut ctx = RegressionContext {
         x,
         dimensions: 1,
         y,
@@ -158,6 +159,7 @@ fn local_wls_helper<T: Float + std::fmt::Debug>(
         zero_weight_fallback: ZeroWeightFallback::UseLocalMean,
         polynomial_degree: PolynomialDegree::Linear,
         compute_leverage: false,
+        buffer: None,
     };
 
     ctx.fit().map(|(v, _)| v).unwrap_or(T::zero()) // Or handle None?
@@ -594,7 +596,7 @@ fn test_weighted_mean_nd() {
     };
     let neighborhood = tree.find_k_nearest(&query, 3, &dist_calc, None);
 
-    let context = RegressionContext {
+    let mut context = RegressionContext {
         x: &x,
         dimensions: 2,
         y: &y,
@@ -607,6 +609,7 @@ fn test_weighted_mean_nd() {
         zero_weight_fallback: ZeroWeightFallback::default(),
         polynomial_degree: PolynomialDegree::Constant,
         compute_leverage: false,
+        buffer: None,
     };
 
     let (result, _leverage) = context.fit().unwrap();
@@ -639,7 +642,7 @@ fn test_linear_fit_nd_2d() {
     // Create a robustness weights array matching size of x
     let robustness_weights = [1.0; 4];
 
-    let context = RegressionContext {
+    let mut context = RegressionContext {
         x: &x,
         dimensions: 2,
         y: &y,
@@ -652,6 +655,7 @@ fn test_linear_fit_nd_2d() {
         zero_weight_fallback: ZeroWeightFallback::default(),
         polynomial_degree: PolynomialDegree::Linear,
         compute_leverage: false,
+        buffer: None,
     };
 
     let (result, _leverage) = context.fit().unwrap();
@@ -663,7 +667,7 @@ fn test_linear_fit_nd_2d() {
 fn test_polynomial_terms_constant() {
     let point: [f64; 2] = [1.0, 2.0];
     let center: [f64; 2] = [0.0, 0.0];
-    let mut terms = Vec::new();
+    let mut terms = vec![0.0; 1];
 
     PolynomialDegree::Constant.build_terms(&point, &center, &mut terms);
     assert_eq!(terms.len(), 1);
@@ -674,7 +678,7 @@ fn test_polynomial_terms_constant() {
 fn test_polynomial_terms_linear_2d() {
     let point: [f64; 2] = [3.0, 5.0];
     let center: [f64; 2] = [1.0, 2.0];
-    let mut terms = Vec::new();
+    let mut terms = vec![0.0; 3];
 
     PolynomialDegree::Linear.build_terms(&point, &center, &mut terms);
     assert_eq!(terms.len(), 3); // [1, x₁-c₁, x₂-c₂]
@@ -687,7 +691,7 @@ fn test_polynomial_terms_linear_2d() {
 fn test_polynomial_terms_quadratic_2d() {
     let point: [f64; 2] = [2.0, 3.0];
     let center: [f64; 2] = [0.0, 0.0];
-    let mut terms = Vec::new();
+    let mut terms = vec![0.0; 6];
 
     PolynomialDegree::Quadratic.build_terms(&point, &center, &mut terms);
     // [1, x₁, x₂, x₁², x₁x₂, x₂²] = [1, 2, 3, 4, 6, 9]
@@ -704,7 +708,7 @@ fn test_polynomial_terms_quadratic_2d() {
 fn test_polynomial_terms_cubic_2d() {
     let point: [f64; 2] = [2.0, 3.0];
     let center: [f64; 2] = [0.0, 0.0];
-    let mut terms = Vec::new();
+    let mut terms = vec![0.0; 10];
 
     PolynomialDegree::Cubic.build_terms(&point, &center, &mut terms);
     // Counts for 2D: 1 (const) + 2 (lin) + 3 (quad) + 4 (cubic) = 10
@@ -721,7 +725,7 @@ fn test_polynomial_terms_cubic_2d() {
 fn test_polynomial_terms_quartic_2d() {
     let point: [f64; 2] = [2.0, 1.0];
     let center: [f64; 2] = [0.0, 0.0];
-    let mut terms = Vec::new();
+    let mut terms = vec![0.0; 15];
 
     PolynomialDegree::Quartic.build_terms(&point, &center, &mut terms);
     // Counts for 2D: 10 (cubic) + 5 (quartic) = 15

@@ -25,11 +25,11 @@ use std::vec::Vec;
 
 // External dependencies
 use core::fmt::Debug;
+use core::option::Option;
 use num_traits::Float;
 
 // Internal dependencies
 use crate::math::neighborhood::{KDTree, Neighborhood, PointDistance};
-use crate::primitives::window::Window;
 
 // ============================================================================
 // Surface Cell
@@ -50,6 +50,10 @@ pub struct SurfaceCell<T: Float> {
     pub split_dim: Option<usize>,
     /// Split value (if not a leaf).
     pub split_val: Option<T>,
+    /// Start index in point index array (for O(1) point counting).
+    pub point_lo: usize,
+    /// End index in point index array, inclusive (for O(1) point counting).
+    pub point_hi: usize,
 }
 
 // ============================================================================
@@ -66,6 +70,8 @@ pub struct SurfaceCell<T: Float> {
 pub struct InterpolationSurface<T: Float> {
     /// Fitted values at each vertex (the y0 coefficient).
     pub vertex_values: Vec<T>,
+    /// Vertex coordinates (stored for refitting).
+    pub vertices: Vec<Vec<T>>,
     /// Spatial cells for lookup.
     pub cells: Vec<SurfaceCell<T>>,
     /// Root cell index.
@@ -85,6 +91,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         y: &[T],
         dimensions: usize,
         fraction: T,
+        window_size: usize,
         dist_calc: &D,
         kdtree: &KDTree<T>,
         max_vertices: usize,
@@ -96,7 +103,6 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         F: Fn(&[T], &Neighborhood<T>) -> Option<T>,
     {
         let n = x.len() / dimensions;
-        let window_size = Window::calculate_span(n, fraction);
 
         // Compute bounding box
         let mut lower = vec![T::infinity(); dimensions];
@@ -151,27 +157,44 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             children: None,
             split_dim: None,
             split_val: None,
+            point_lo: 0,
+            point_hi: n.saturating_sub(1),
         };
         cells.push(root_cell);
 
-        // Compute subdivision thresholds
-        let mut thresholds = Vec::with_capacity(dimensions);
-        let range_fraction = fraction * cell_size;
+        // Create point index array for O(1) point counting during subdivision
+        let mut pi: Vec<usize> = (0..n).collect();
+
+        // Cleveland's subdivision parameters:
+        // fc = floor(n * cell * span) - minimum points per leaf cell
+        // fd = cell * data_diameter - minimum cell diameter
+        let fc = (T::from(n).unwrap() * cell_size * fraction)
+            .floor()
+            .to_usize()
+            .unwrap_or(1)
+            .max(1);
+
+        // Compute data diameter (diagonal of bounding box)
+        let mut data_diameter_sq = T::zero();
         for d in 0..dimensions {
             let range = upper[d] - lower[d];
-            thresholds.push(range * range_fraction);
+            data_diameter_sq = data_diameter_sq + range * range;
         }
+        let data_diameter = data_diameter_sq.sqrt();
+        let fd = cell_size * data_diameter;
 
-        // Subdivide cells
+        // Subdivide cells using Cleveland's stopping criteria
+        // Pass pi array for O(1) point counting via partitioning
         Self::subdivide_cells(
             &mut cells,
             &mut vertices,
+            &mut pi,
             0,
             x,
             dimensions,
             max_vertices,
-            window_size,
-            &thresholds,
+            fc, // min points per cell
+            fd, // min cell diameter
         );
 
         // Fit at each vertex
@@ -200,88 +223,147 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
 
         Self {
             vertex_values,
+            vertices,
             cells,
             root: 0,
             dimensions,
         }
     }
 
-    /// Subdivide cells recursively.
+    /// Refit vertex values without rebuilding the cell structure.
+    ///
+    /// This is used during robustness iterations to update vertex fits
+    /// with new robustness weights, avoiding the expensive cell subdivision.
+    pub fn refit_values<D, F>(
+        &mut self,
+        y: &[T],
+        kdtree: &KDTree<T>,
+        window_size: usize,
+        dist_calc: &D,
+        fitter: F,
+    ) where
+        D: PointDistance<T>,
+        F: Fn(&[T], &Neighborhood<T>) -> Option<T>,
+    {
+        let n = y.len() / self.dimensions;
+
+        for (v_idx, vertex) in self.vertices.iter().enumerate() {
+            // Find neighbors for this vertex
+            let neighborhood = kdtree.find_k_nearest(vertex, window_size, dist_calc, None);
+
+            if neighborhood.is_empty() {
+                // Fallback: use mean of all y values
+                let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
+                self.vertex_values[v_idx] = mean;
+                continue;
+            }
+
+            // Fit local regression at this vertex using injected fitter
+            if let Some(val) = fitter(vertex, &neighborhood) {
+                self.vertex_values[v_idx] = val;
+            } else {
+                // Fallback to mean
+                let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
+                self.vertex_values[v_idx] = mean;
+            }
+        }
+    }
+
+    /// Subdivide cells recursively using Cleveland's stopping criteria.
+    ///
+    /// Uses O(1) point counting via index ranges in the `pi` array.
+    /// Points are partitioned during subdivision like scikit-misc's ehg106/ehg124.
+    ///
+    /// Stops subdividing when:
+    /// - `points_in_cell <= fc` (minimum points per cell)
+    /// - `cell_diameter <= fd` (minimum cell diameter)
+    /// - `vertices.len() >= max_vertices` (hard limit)
     #[allow(clippy::too_many_arguments)]
     fn subdivide_cells(
         cells: &mut Vec<SurfaceCell<T>>,
         vertices: &mut Vec<Vec<T>>,
+        pi: &mut [usize], // Point index array (reordered in-place)
         cell_idx: usize,
         x: &[T],
         dimensions: usize,
         max_vertices: usize,
-        target_window: usize,
-        thresholds: &[T],
+        fc: usize, // min points per cell (Cleveland's fc)
+        fd: T,     // min cell diameter (Cleveland's fd)
     ) {
-        // Stop if we have enough vertices
+        // Stop if we have reached the vertex limit
         if vertices.len() >= max_vertices {
             return;
         }
 
-        let n = x.len() / dimensions;
-
-        // Count points in this cell
         let cell = &cells[cell_idx];
-        let mut points_in_cell = 0;
-        for i in 0..n {
-            let mut inside = true;
-            for d in 0..dimensions {
-                let val = x[i * dimensions + d];
-                if val < cell.lower[d] || val > cell.upper[d] {
-                    inside = false;
-                    break;
-                }
-            }
-            if inside {
-                points_in_cell += 1;
-            }
-        }
+        let lo = cell.point_lo;
+        let hi = cell.point_hi;
 
-        // Check if we need to split based on geometry (cell size)
-        let mut force_split = false;
-        for (d, &threshold) in thresholds.iter().enumerate().take(dimensions) {
+        // O(1) point count using index ranges!
+        let points_in_cell = if hi >= lo { hi - lo + 1 } else { 0 };
+
+        // Compute cell diameter (Euclidean distance of diagonal)
+        let mut diam_sq = T::zero();
+        for d in 0..dimensions {
             let range = cell.upper[d] - cell.lower[d];
-            if range > threshold {
-                force_split = true;
-                break;
-            }
+            diam_sq = diam_sq + range * range;
         }
+        let diam = diam_sq.sqrt();
 
-        // Don't subdivide if cell has few points relative to window size
-        if (!force_split && points_in_cell <= target_window) || vertices.len() >= max_vertices {
+        // Cleveland's stopping criteria:
+        // leaf = (points <= fc) OR (diameter <= fd)
+        let is_leaf = points_in_cell <= fc || diam <= fd;
+
+        if is_leaf || points_in_cell == 0 {
             return;
         }
 
-        // Find dimension with largest range
+        // Additional safety: don't subdivide if we'd exceed vertex limits
+        let num_new_vertices = 1usize << (dimensions - 1);
+        if vertices.len() + num_new_vertices > max_vertices {
+            return;
+        }
+
+        // Find dimension with largest spread in point data (like Cleveland's ehg129)
         let mut best_dim = 0;
-        let mut best_range = T::zero();
+        let mut best_spread = T::zero();
         for d in 0..dimensions {
-            let range = cell.upper[d] - cell.lower[d];
-            if range > best_range {
-                best_range = range;
+            let mut min_val = T::infinity();
+            let mut max_val = T::neg_infinity();
+            for &idx in &pi[lo..=hi] {
+                let val = x[idx * dimensions + d];
+                if val < min_val {
+                    min_val = val;
+                }
+                if val > max_val {
+                    max_val = val;
+                }
+            }
+            let spread = max_val - min_val;
+            if spread > best_spread {
+                best_spread = spread;
                 best_dim = d;
             }
         }
 
-        // Split at midpoint
-        let split_val = (cell.lower[best_dim] + cell.upper[best_dim]) / T::from(2.0).unwrap();
+        // Find median split point
+        let m = (lo + hi) / 2;
 
-        // Create child cells
-        let left_lower = cell.lower.clone();
-        let mut left_upper = cell.upper.clone();
+        // Partition points around median using Floyd-Rivest style selection
+        Self::partition_by_dim(pi, lo, hi, m, x, best_dim, dimensions);
+
+        let split_val = x[pi[m] * dimensions + best_dim];
+
+        // Create child cells with inherited bounds
+        let left_lower = cells[cell_idx].lower.clone();
+        let mut left_upper = cells[cell_idx].upper.clone();
         left_upper[best_dim] = split_val;
 
-        let mut right_lower = cell.lower.clone();
-        let right_upper = cell.upper.clone();
+        let mut right_lower = cells[cell_idx].lower.clone();
+        let right_upper = cells[cell_idx].upper.clone();
         right_lower[best_dim] = split_val;
 
         // Create vertices for new split plane
-        let num_new_vertices = 1usize << (dimensions - 1); // 2^(d-1) new vertices on split plane
         let start_vertex_idx = vertices.len();
 
         for corner_idx in 0..num_new_vertices {
@@ -292,9 +374,9 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             for (d, v_d) in vertex.iter_mut().enumerate().take(dimensions) {
                 if d != best_dim {
                     if (corner_idx >> bit_pos) & 1 == 0 {
-                        *v_d = cell.lower[d];
+                        *v_d = cells[cell_idx].lower[d];
                     } else {
-                        *v_d = cell.upper[d];
+                        *v_d = cells[cell_idx].upper[d];
                     }
                     bit_pos += 1;
                 }
@@ -307,7 +389,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let mut left_vertices = vec![0; num_corners];
         let mut right_vertices = vec![0; num_corners];
 
-        let parent_vertices = &cells[cell_idx].vertex_indices;
+        let parent_vertices = cells[cell_idx].vertex_indices.clone();
 
         for child_corner_idx in 0..num_corners {
             let dim_bit = (child_corner_idx >> best_dim) & 1;
@@ -320,19 +402,15 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
 
             // Left Child
             if dim_bit == 0 {
-                // Comes from parent (same index because bit is 0)
                 left_vertices[child_corner_idx] = parent_vertices[child_corner_idx];
             } else {
-                // Comes from split (new vertex)
                 left_vertices[child_corner_idx] = start_vertex_idx + compressed_idx;
             }
 
             // Right Child
             if dim_bit == 0 {
-                // Comes from split (new vertex)
                 right_vertices[child_corner_idx] = start_vertex_idx + compressed_idx;
             } else {
-                // Comes from parent (same index because bit is 1)
                 right_vertices[child_corner_idx] = parent_vertices[child_corner_idx];
             }
         }
@@ -340,6 +418,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let left_idx = cells.len();
         let right_idx = cells.len() + 1;
 
+        // Child cells inherit point ranges from partition
         cells.push(SurfaceCell {
             lower: left_lower,
             upper: left_upper,
@@ -347,6 +426,8 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             children: None,
             split_dim: None,
             split_val: None,
+            point_lo: lo,
+            point_hi: m,
         });
 
         cells.push(SurfaceCell {
@@ -356,6 +437,8 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             children: None,
             split_dim: None,
             split_val: None,
+            point_lo: m + 1,
+            point_hi: hi,
         });
 
         // Update parent
@@ -367,23 +450,72 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         Self::subdivide_cells(
             cells,
             vertices,
+            pi,
             left_idx,
             x,
             dimensions,
             max_vertices,
-            target_window,
-            thresholds,
+            fc,
+            fd,
         );
         Self::subdivide_cells(
             cells,
             vertices,
+            pi,
             right_idx,
             x,
             dimensions,
             max_vertices,
-            target_window,
-            thresholds,
+            fc,
+            fd,
         );
+    }
+
+    /// Partition pi[lo..=hi] so that pi[m] contains the median element along dimension dim.
+    /// Uses a quickselect-style algorithm similar to Floyd-Rivest.
+    fn partition_by_dim(
+        pi: &mut [usize],
+        lo: usize,
+        hi: usize,
+        k: usize, // target position
+        x: &[T],
+        dim: usize,
+        dimensions: usize,
+    ) {
+        if lo >= hi {
+            return;
+        }
+
+        let mut left = lo;
+        let mut right = hi;
+
+        while left < right {
+            // Partition around pivot at position k
+            let pivot_val = x[pi[k] * dimensions + dim];
+
+            // Move pivot to end
+            pi.swap(k, right);
+
+            let mut store_idx = left;
+            for i in left..right {
+                if x[pi[i] * dimensions + dim] < pivot_val {
+                    pi.swap(i, store_idx);
+                    store_idx += 1;
+                }
+            }
+
+            // Move pivot to final position
+            pi.swap(store_idx, right);
+
+            // Narrow search range
+            if store_idx == k {
+                return;
+            } else if store_idx < k {
+                left = store_idx + 1;
+            } else {
+                right = store_idx.saturating_sub(1);
+            }
+        }
     }
 
     /// Evaluate the surface at a query point using multilinear interpolation.
@@ -414,7 +546,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                         current = right;
                     }
                 }
-                None => {
+                Option::None => {
                     // Leaf cell
                     return current;
                 }
@@ -422,23 +554,53 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         }
     }
 
+    /// Cubic Hermite blending function (smoothstep).
+    /// Maps [0, 1] to [0, 1] with zero derivative at endpoints.
+    /// f(t) = 3t^2 - 2t^3
+    fn smoothstep(t: T) -> T {
+        let three = T::from(3.0).unwrap();
+        let two = T::from(2.0).unwrap();
+        t * t * (three - two * t)
+    }
+
     /// Perform multilinear interpolation within a cell.
     fn interpolate_in_cell(&self, cell: &SurfaceCell<T>, query: &[T]) -> T {
         let d = self.dimensions;
 
-        // For each dimension, compute the interpolation weight
-        let mut weights = Vec::with_capacity(d);
-        for (dim, item) in query.iter().enumerate().take(d) {
-            let range = cell.upper[dim] - cell.lower[dim];
-            if range > T::epsilon() {
-                let t = (*item - cell.lower[dim]) / range;
-                // Clamp to [0, 1] for points slightly outside
-                let t = t.max(T::zero()).min(T::one());
-                weights.push(t);
-            } else {
-                weights.push(T::zero());
+        // Optimization: Use a stack-allocated buffer for common low-dimensional cases
+        let mut weights_stack = [T::zero(); 16];
+        let mut weights_heap = Vec::new();
+
+        if d <= 16 {
+            for (dim, item) in query.iter().enumerate().take(d) {
+                let range = cell.upper[dim] - cell.lower[dim];
+                if range > T::epsilon() {
+                    let t = (*item - cell.lower[dim]) / range;
+                    let t_clamped = t.max(T::zero()).min(T::one());
+                    weights_stack[dim] = Self::smoothstep(t_clamped);
+                } else {
+                    weights_stack[dim] = T::zero();
+                }
             }
-        }
+        } else {
+            weights_heap.reserve(d);
+            for (dim, item) in query.iter().enumerate().take(d) {
+                let range = cell.upper[dim] - cell.lower[dim];
+                if range > T::epsilon() {
+                    let t = (*item - cell.lower[dim]) / range;
+                    let t_clamped = t.max(T::zero()).min(T::one());
+                    weights_heap.push(Self::smoothstep(t_clamped));
+                } else {
+                    weights_heap.push(T::zero());
+                }
+            }
+        };
+
+        let weights: &[T] = if d <= 16 {
+            &weights_stack[..d]
+        } else {
+            &weights_heap
+        };
 
         // Multilinear interpolation: weighted sum over all 2^d corners
         let num_corners = 1usize << d;

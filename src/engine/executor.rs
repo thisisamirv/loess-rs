@@ -53,14 +53,16 @@ use num_traits::Float;
 
 // Internal dependencies
 use crate::algorithms::interpolation::InterpolationSurface;
-use crate::algorithms::regression::{PolynomialDegree, RegressionContext, ZeroWeightFallback};
+use crate::algorithms::regression::{
+    FittingBuffer, PolynomialDegree, RegressionContext, ZeroWeightFallback,
+};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::evaluation::cv::CVKind;
 use crate::evaluation::intervals::IntervalMethod;
 use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
-use crate::math::neighborhood::{KDTree, Neighborhood, PointDistance};
+use crate::math::neighborhood::{KDTree, Neighborhood, PointDistance, floyd_rivest_select};
 use crate::primitives::backend::Backend;
 use crate::primitives::window::Window;
 
@@ -710,115 +712,178 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
 
         let mut iterations_performed = 0;
 
-        for iter in 0..=target_iterations {
-            iterations_performed = iter;
+        // For interpolation mode: build surface once before iterations
+        let mut _surface_opt: Option<InterpolationSurface<T>> = None;
+        if self.surface_mode == SurfaceMode::Interpolation {
+            // Initial build with unit robustness weights
+            let fitter = |vertex: &[T], neighborhood: &Neighborhood<T>| {
+                let mut context = RegressionContext {
+                    x: &ax,
+                    dimensions: dims,
+                    y: &ay,
+                    query_idx: 0,
+                    query_point: Some(vertex),
+                    neighborhood,
+                    use_robustness: false,
+                    robustness_weights: &robustness_weights,
+                    weight_function: self.weight_function,
+                    zero_weight_fallback: self.zero_weight_fallback,
+                    polynomial_degree: self.polynomial_degree,
+                    compute_leverage: false,
+                    buffer: None,
+                };
+                context.fit().map(|(val, _)| val)
+            };
 
-            // Branch based on surface mode
-            match self.surface_mode {
-                SurfaceMode::Interpolation => {
-                    // Build interpolation surface with current robustness weights
-                    // Create fitter closure that captures regression parameters
-                    let use_robustness = iter > 0;
-                    let fitter = |vertex: &[T], neighborhood: &Neighborhood<T>| {
-                        let context = RegressionContext {
-                            x: &ax,
-                            dimensions: dims,
-                            y: &ay,
-                            query_idx: 0,
-                            query_point: Some(vertex),
-                            neighborhood,
-                            use_robustness,
-                            robustness_weights: &robustness_weights,
-                            weight_function: self.weight_function,
-                            zero_weight_fallback: self.zero_weight_fallback,
-                            polynomial_degree: self.polynomial_degree,
-                            compute_leverage: false,
-                        };
-                        context.fit().map(|(val, _)| val)
-                    };
+            let surface = InterpolationSurface::build(
+                &ax,
+                &ay,
+                dims,
+                eff_fraction,
+                window_size,
+                &dist_calc,
+                &kdtree,
+                max_vertices,
+                fitter,
+                T::from(self.cell.unwrap_or(0.2)).unwrap_or(T::from(0.2).unwrap()),
+            );
 
-                    let surface = InterpolationSurface::build(
-                        &ax,
-                        &ay,
-                        dims,
-                        eff_fraction,
-                        &dist_calc,
-                        &kdtree,
-                        max_vertices,
-                        fitter,
-                        T::from(self.cell.unwrap_or(0.2)).unwrap_or(T::from(0.2).unwrap()),
-                    );
-
-                    // Evaluate surface at original data points only
-                    for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
-                        let query_offset = i * dims;
-                        let query_point = &ax[query_offset..query_offset + dims];
-                        *val = surface.evaluate(query_point);
-                    }
-                }
-                SurfaceMode::Direct => {
-                    // Direct per-point fitting using smooth_pass
-                    self.smooth_pass(
-                        &ax,
-                        &ay,
-                        window_size,
-                        &robustness_weights,
-                        iter > 0, // use_robustness
-                        &scales,
-                        &mut y_smooth,
-                        n, // original_n
-                        &kdtree,
-                    );
-                }
+            // Evaluate surface at original data points
+            for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
+                let query_offset = i * dims;
+                let query_point = &ax[query_offset..query_offset + dims];
+                *val = surface.evaluate(query_point);
             }
 
-            if iter < target_iterations {
-                // Update robustness weights
-                for i in 0..n {
-                    residuals[i] = (y[i] - y_smooth[i]).abs();
-                }
+            _surface_opt = Some(surface);
+        } else {
+            // Direct mode: initial fit
+            self.smooth_pass(
+                &ax,
+                &ay,
+                window_size,
+                &robustness_weights,
+                false,
+                &scales,
+                &mut y_smooth,
+                n,
+                &kdtree,
+            );
+        }
 
-                let mut sorted_residuals = residuals.clone();
-                sorted_residuals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Equal));
-                let median_residual = sorted_residuals[n / 2];
-                let mad = median_residual; // Simple MAD approximation
+        // Robustness iteration loop
+        for iter in 1..=target_iterations {
+            iterations_performed = iter;
 
-                if mad <= T::epsilon() {
-                    break;
-                }
+            // Update robustness weights based on residuals from previous pass
+            for i in 0..n {
+                residuals[i] = (y[i] - y_smooth[i]).abs();
+            }
 
-                let tolerance_val = tolerance.unwrap_or_else(|| T::from(1e-6).unwrap());
-                let mut max_change = T::zero();
+            let mut sorted_residuals = residuals.clone();
+            let median_idx = n / 2;
+            floyd_rivest_select(&mut sorted_residuals, median_idx, |a, b| {
+                a.partial_cmp(b).unwrap_or(Equal)
+            });
+            let median_residual = sorted_residuals[median_idx];
+            let mad = median_residual;
 
-                for i in 0..n {
-                    let orig_idx = if is_augmented { mapping[i] } else { i };
-                    let old_w = robustness_weights[orig_idx];
-                    let r = residuals[i] / (T::from(6.0).unwrap() * mad);
-                    let new_w = if r < T::one() {
-                        let tmp = T::one() - r * r;
-                        tmp * tmp
-                    } else {
-                        T::zero()
-                    };
-                    robustness_weights[orig_idx] = new_w;
+            if mad <= T::epsilon() {
+                break;
+            }
 
-                    // Sync to augmented points if needed
-                    if is_augmented {
-                        for (aug_idx, &mapped_orig) in mapping.iter().enumerate() {
-                            if mapped_orig == orig_idx {
-                                robustness_weights[aug_idx] = new_w;
-                            }
-                        }
-                    }
+            let tolerance_val = tolerance.unwrap_or_else(|| T::from(1e-6).unwrap());
+
+            // 1. Compute new weights for original points
+            // Use a temp buffer to avoid overwriting weights used by augmented points before sync
+            let mut new_weights = vec![T::zero(); n];
+            for i in 0..n {
+                let r = residuals[i] / (T::from(6.0).unwrap() * mad);
+                new_weights[i] = if r < T::one() {
+                    let tmp = T::one() - r * r;
+                    tmp * tmp
+                } else {
+                    T::zero()
+                };
+            }
+
+            // 2. Sync to robustness_weights and check convergence
+            let mut max_change = T::zero();
+
+            if is_augmented {
+                for (aug_idx, &orig_idx) in mapping.iter().enumerate() {
+                    let old_w = robustness_weights[aug_idx];
+                    let new_w = new_weights[orig_idx];
+                    robustness_weights[aug_idx] = new_w;
 
                     let change = (new_w - old_w).abs();
                     if change > max_change {
                         max_change = change;
                     }
                 }
+            } else {
+                for i in 0..n {
+                    let old_w = robustness_weights[i];
+                    let new_w = new_weights[i];
+                    robustness_weights[i] = new_w;
 
-                if max_change < tolerance_val {
-                    break;
+                    let change = (new_w - old_w).abs();
+                    if change > max_change {
+                        max_change = change;
+                    }
+                }
+            }
+
+            if max_change < tolerance_val {
+                break;
+            }
+
+            // Re-fit with new robustness weights
+            match self.surface_mode {
+                SurfaceMode::Interpolation => {
+                    // Refit vertex values using existing surface structure
+                    if let Some(ref mut surface) = _surface_opt {
+                        let fitter = |vertex: &[T], neighborhood: &Neighborhood<T>| {
+                            let mut context = RegressionContext {
+                                x: &ax,
+                                dimensions: dims,
+                                y: &ay,
+                                query_idx: 0,
+                                query_point: Some(vertex),
+                                neighborhood,
+                                use_robustness: true,
+                                robustness_weights: &robustness_weights,
+                                weight_function: self.weight_function,
+                                zero_weight_fallback: self.zero_weight_fallback,
+                                polynomial_degree: self.polynomial_degree,
+                                compute_leverage: false,
+                                buffer: None,
+                            };
+                            context.fit().map(|(val, _)| val)
+                        };
+
+                        surface.refit_values(&ay, &kdtree, window_size, &dist_calc, fitter);
+
+                        // Re-evaluate at data points
+                        for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
+                            let query_offset = i * dims;
+                            let query_point = &ax[query_offset..query_offset + dims];
+                            *val = surface.evaluate(query_point);
+                        }
+                    }
+                }
+                SurfaceMode::Direct => {
+                    self.smooth_pass(
+                        &ax,
+                        &ay,
+                        window_size,
+                        &robustness_weights,
+                        true,
+                        &scales,
+                        &mut y_smooth,
+                        n,
+                        &kdtree,
+                    );
                 }
             }
         }
@@ -830,8 +895,11 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 residuals[i] = (y[i] - y_smooth[i]).abs();
             }
             let mut sorted_residuals = residuals.clone();
-            sorted_residuals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Equal));
-            let median_residual = sorted_residuals[n / 2];
+            let median_idx = n / 2;
+            floyd_rivest_select(&mut sorted_residuals, median_idx, |a, b| {
+                a.partial_cmp(b).unwrap_or(Equal)
+            });
+            let median_residual = sorted_residuals[median_idx];
             let sigma = median_residual * T::from(1.4826).unwrap();
 
             // Approximate leverage based on fraction
@@ -844,7 +912,30 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
 
         // Extract robustness weights for original points only
         let final_robustness_weights: Vec<T> = if is_augmented {
-            (0..n).map(|i| robustness_weights[mapping[i]]).collect()
+            // Find the start of the contiguous original data block [0, 1, ..., n-1]
+            // within the mapping to locate the corresponding robustness weights.
+            let mut start_offset = 0;
+            for i in 0..n_total {
+                if mapping[i] == 0 {
+                    let mut match_seq = true;
+                    if i + n <= n_total {
+                        for j in 0..n {
+                            if mapping[i + j] != j {
+                                match_seq = false;
+                                break;
+                            }
+                        }
+                    } else {
+                        match_seq = false;
+                    }
+
+                    if match_seq {
+                        start_offset = i;
+                        break;
+                    }
+                }
+            }
+            robustness_weights[start_offset..start_offset + n].to_vec()
         } else {
             robustness_weights[..n].to_vec()
         };
@@ -889,6 +980,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             scales,
         };
 
+        let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
+        let mut buffer = FittingBuffer::new(window_size, n_coeffs);
+
         for (i, pred) in y_pred.iter_mut().enumerate() {
             let query_offset = i * dims;
             let query_point = &x_query[query_offset..query_offset + dims];
@@ -899,7 +993,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 .find_k_nearest(query_point, window_size, &dist_calc, None);
 
             // Fit local polynomial
-            let context = RegressionContext {
+            let mut context = RegressionContext {
                 x: x_train,
                 dimensions: dims,
                 y: y_train,
@@ -912,6 +1006,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 zero_weight_fallback: ZeroWeightFallback::default(), // CV fallback
                 polynomial_degree: self.polynomial_degree,
                 compute_leverage: false,
+                buffer: Some(&mut buffer),
             };
 
             if let Some((val, _)) = context.fit() {
@@ -948,12 +1043,15 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             scales,
         };
 
+        let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
+        let mut buffer = FittingBuffer::new(window_size, n_coeffs);
+
         for i in 0..original_n {
             let query_offset = i * dims;
             let query_point = &x[query_offset..query_offset + dims];
             let neighborhood = kdtree.find_k_nearest(query_point, window_size, &dist_calc, None);
 
-            let context = RegressionContext {
+            let mut context = RegressionContext {
                 x,
                 dimensions: dims,
                 y,
@@ -966,6 +1064,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 zero_weight_fallback: self.zero_weight_fallback,
                 polynomial_degree: self.polynomial_degree,
                 compute_leverage: false,
+                buffer: Some(&mut buffer),
             };
 
             if let Some((val, _)) = context.fit() {
