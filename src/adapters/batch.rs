@@ -53,7 +53,7 @@ use crate::evaluation::cv::CVKind;
 use crate::evaluation::diagnostics::Diagnostics;
 use crate::evaluation::intervals::IntervalMethod;
 use crate::math::boundary::BoundaryPolicy;
-use crate::math::distance::DistanceMetric;
+use crate::math::distance::{DistanceLinalg, DistanceMetric};
 use crate::math::hat_matrix::HatMatrixStats;
 use crate::math::kernel::WeightFunction;
 use crate::math::linalg::FloatLinalg;
@@ -66,7 +66,7 @@ use crate::primitives::errors::LoessError;
 
 /// Builder for batch LOESS processor.
 #[derive(Debug, Clone)]
-pub struct BatchLoessBuilder<T: FloatLinalg> {
+pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg> {
     /// Smoothing fraction (span)
     pub fraction: T,
 
@@ -162,13 +162,13 @@ pub struct BatchLoessBuilder<T: FloatLinalg> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> Default for BatchLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for BatchLoessBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> BatchLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> BatchLoessBuilder<T> {
     /// Create a new batch LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -392,11 +392,11 @@ impl<T: FloatLinalg + Debug + Send + Sync> BatchLoessBuilder<T> {
 // ============================================================================
 
 /// Batch LOESS processor.
-pub struct BatchLoess<T: FloatLinalg> {
+pub struct BatchLoess<T: FloatLinalg + DistanceLinalg> {
     config: BatchLoessBuilder<T>,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync + 'static> BatchLoess<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> BatchLoess<T> {
     /// Perform LOESS smoothing on the provided data.
     pub fn fit(self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
         Validator::validate_inputs(x, y, self.config.dimensions)?;

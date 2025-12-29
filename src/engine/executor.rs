@@ -58,7 +58,7 @@ use crate::algorithms::robustness::RobustnessMethod;
 use crate::evaluation::cv::CVKind;
 use crate::evaluation::intervals::IntervalMethod;
 use crate::math::boundary::BoundaryPolicy;
-use crate::math::distance::DistanceMetric;
+use crate::math::distance::{DistanceLinalg, DistanceMetric};
 use crate::math::kernel::WeightFunction;
 use crate::math::linalg::FloatLinalg;
 use crate::math::neighborhood::{
@@ -71,14 +71,14 @@ use crate::primitives::window::Window;
 /// Standard LOESS distance calculator.
 ///
 /// Implements `PointDistance` using either Euclidean or Normalized Euclidean metrics.
-pub struct LoessDistanceCalculator<'a, T: FloatLinalg> {
+pub struct LoessDistanceCalculator<'a, T: FloatLinalg + DistanceLinalg> {
     /// The distance metric to use (Euclidean or Normalized).
     pub metric: DistanceMetric<T>,
     /// Normalization scales for each dimension (used if metric is Normalized).
     pub scales: &'a [T],
 }
 
-impl<'a, T: FloatLinalg> PointDistance<T> for LoessDistanceCalculator<'a, T> {
+impl<'a, T: FloatLinalg + DistanceLinalg> PointDistance<T> for LoessDistanceCalculator<'a, T> {
     fn distance(&self, a: &[T], b: &[T]) -> T {
         match &self.metric {
             DistanceMetric::Normalized => DistanceMetric::normalized(a, b, self.scales),
@@ -288,7 +288,7 @@ pub struct LoessConfig<T: FloatLinalg> {
     pub parallel: bool,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> Default for LoessConfig<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for LoessConfig<T> {
     fn default() -> Self {
         Self {
             fraction: None,
@@ -385,13 +385,13 @@ pub struct LoessExecutor<T: FloatLinalg> {
     pub parallel: bool,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync + 'static> Default for LoessExecutor<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> Default for LoessExecutor<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync + 'static> LoessExecutor<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecutor<T> {
     // ========================================================================
     // Constructor and Builder Methods
     // ========================================================================
@@ -845,9 +845,11 @@ impl<T: FloatLinalg + Debug + Send + Sync + 'static> LoessExecutor<T> {
             iterations_performed = iter;
 
             // Update robustness weights based on residuals from previous pass
-            for i in 0..n {
-                workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
-            }
+            T::batch_abs_residuals(
+                &y[..n],
+                &y_smooth[..n],
+                &mut workspace.executor_buffer.residuals[..n],
+            );
 
             workspace.executor_buffer.sorted_residuals.clear();
             workspace
@@ -1018,9 +1020,11 @@ impl<T: FloatLinalg + Debug + Send + Sync + 'static> LoessExecutor<T> {
         let se = if confidence_method.is_some() {
             if let Some(ref lev) = leverage_values {
                 // Use actual leverage values
-                for i in 0..n {
-                    workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
-                }
+                T::batch_abs_residuals(
+                    &y[..n],
+                    &y_smooth[..n],
+                    &mut workspace.executor_buffer.residuals[..n],
+                );
                 let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
                 let median_idx = n / 2;
                 floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {
@@ -1030,13 +1034,16 @@ impl<T: FloatLinalg + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 let sigma = median_residual * T::from(1.4826).unwrap();
 
                 // SE = sigma * sqrt(leverage)
-                let se_vec: Vec<T> = lev.iter().map(|&l| sigma * l.sqrt()).collect();
+                let mut se_vec = vec![T::zero(); n];
+                T::batch_sqrt_scale(lev, sigma, &mut se_vec);
                 Some(se_vec)
             } else {
                 // Fallback to approximate leverage (for Interpolation mode)
-                for i in 0..n {
-                    workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
-                }
+                T::batch_abs_residuals(
+                    &y[..n],
+                    &y_smooth[..n],
+                    &mut workspace.executor_buffer.residuals[..n],
+                );
                 let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
                 let median_idx = n / 2;
                 floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {

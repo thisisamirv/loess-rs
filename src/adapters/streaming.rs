@@ -55,7 +55,7 @@ use crate::engine::output::LoessResult;
 use crate::engine::validator::Validator;
 use crate::evaluation::diagnostics::DiagnosticsState;
 use crate::math::boundary::BoundaryPolicy;
-use crate::math::distance::DistanceMetric;
+use crate::math::distance::{DistanceLinalg, DistanceMetric};
 use crate::math::kernel::WeightFunction;
 use crate::math::linalg::FloatLinalg;
 use crate::primitives::backend::Backend;
@@ -85,7 +85,7 @@ pub enum MergeStrategy {
 
 /// Builder for streaming LOESS processor.
 #[derive(Debug, Clone)]
-pub struct StreamingLoessBuilder<T: FloatLinalg> {
+pub struct StreamingLoessBuilder<T: FloatLinalg + DistanceLinalg> {
     /// Chunk size for processing
     pub chunk_size: usize,
 
@@ -178,13 +178,13 @@ pub struct StreamingLoessBuilder<T: FloatLinalg> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> Default for StreamingLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for StreamingLoessBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> StreamingLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> StreamingLoessBuilder<T> {
     /// Create a new streaming LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -407,7 +407,7 @@ impl<T: FloatLinalg + Debug + Send + Sync> StreamingLoessBuilder<T> {
 // ============================================================================
 
 /// Streaming LOESS processor for large datasets.
-pub struct StreamingLoess<T: FloatLinalg + Debug + Send + Sync> {
+pub struct StreamingLoess<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> {
     config: StreamingLoessBuilder<T>,
     overlap_buffer_x: Vec<T>,
     overlap_buffer_y: Vec<T>,
@@ -416,7 +416,7 @@ pub struct StreamingLoess<T: FloatLinalg + Debug + Send + Sync> {
     diagnostics_state: Option<DiagnosticsState<T>>,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> StreamingLoess<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> StreamingLoess<T> {
     /// Process a chunk of data.
     pub fn process_chunk(&mut self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
         // Validate inputs using standard validator

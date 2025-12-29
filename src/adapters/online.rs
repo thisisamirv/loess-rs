@@ -50,7 +50,7 @@ use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn,
 use crate::engine::executor::{LoessConfig, LoessExecutor};
 use crate::engine::validator::Validator;
 use crate::math::boundary::BoundaryPolicy;
-use crate::math::distance::DistanceMetric;
+use crate::math::distance::{DistanceLinalg, DistanceMetric};
 use crate::math::kernel::WeightFunction;
 use crate::math::linalg::FloatLinalg;
 use crate::primitives::backend::Backend;
@@ -73,7 +73,7 @@ pub enum UpdateMode {
 
 /// Builder for online LOESS processor.
 #[derive(Debug, Clone)]
-pub struct OnlineLoessBuilder<T: FloatLinalg> {
+pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg> {
     /// Window capacity (maximum number of points to retain)
     pub window_capacity: usize,
 
@@ -163,13 +163,13 @@ pub struct OnlineLoessBuilder<T: FloatLinalg> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> Default for OnlineLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for OnlineLoessBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync> OnlineLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> OnlineLoessBuilder<T> {
     /// Create a new online LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -398,7 +398,7 @@ pub struct OnlineOutput<T> {
 // ============================================================================
 
 /// Online LOESS processor for streaming data.
-pub struct OnlineLoess<T: FloatLinalg> {
+pub struct OnlineLoess<T: FloatLinalg + DistanceLinalg> {
     config: OnlineLoessBuilder<T>,
     window_x: VecDeque<T>,
     window_y: VecDeque<T>,
@@ -408,7 +408,7 @@ pub struct OnlineLoess<T: FloatLinalg> {
     scratch_y: Vec<T>,
 }
 
-impl<T: FloatLinalg + Debug + Send + Sync + 'static> OnlineLoess<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> OnlineLoess<T> {
     /// Add a new point and get its smoothed value.
     pub fn add_point(&mut self, x: &[T], y: T) -> Result<Option<OnlineOutput<T>>, LoessError> {
         // Validate new point
