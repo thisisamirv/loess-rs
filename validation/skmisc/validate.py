@@ -1,266 +1,156 @@
 import numpy as np
-from statsmodels.nonparametric.smoothers_lowess import lowess
+from skmisc.loess import loess
 import json
-from pathlib import Path
+import os
 
-class LowessBuilder:
-    def __init__(self):
-        self._fraction = 0.67
-        self._iterations = 3
-        self._delta = None
-        self._weight_function = 'tricube'  # Fixed, but for compatibility
-        self._robustness_method = 'bisquare'  # Fixed
-        self.interval_level = None
-        self.interval_type = None
-        self.cv_fractions = None
-        self.cv_method = None
-        self.k = 5
-        self.auto_convergence = None
-        self._max_iterations = 20
-        self.compute_diagnostics = False
-        self.compute_residuals = False
-        self.compute_robustness_weights = False
-        self._zero_weight_fallback = 'use_local_mean'  # Not used
+OUTPUT_DIR = "output/scikit/"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    def fraction(self, fraction):
-        self._fraction = fraction
-        return self
-
-    def iterations(self, iterations):
-        self._iterations = iterations
-        return self
-
-    def delta(self, delta):
-        self._delta = delta
-        return self
-
-    def weight_function(self, weight_function):
-        # Fixed to tricube, ignore others
-        self._weight_function = weight_function
-        return self
-
-    def robustness_method(self, robustness_method):
-        # Fixed to bisquare, ignore others
-        self._robustness_method = robustness_method
-        return self
-
-    def with_confidence_intervals(self, level):
-        # Not supported, set for compatibility
-        self.interval_level = level
-        self.interval_type = 'confidence'
-        return self
-
-    def with_prediction_intervals(self, level):
-        self.interval_level = level
-        self.interval_type = 'prediction'
-        return self
-
-    def with_both_intervals(self, level):
-        self.interval_level = level
-        self.interval_type = 'both'
-        return self
-
-    def cross_validate(self, fractions):
-        self.cv_fractions = fractions
-        self.cv_method = 'simple'
-        return self
-
-    def cross_validate_kfold(self, fractions, k):
-        self.cv_fractions = fractions
-        self.cv_method = 'kfold'
-        self.k = k
-        return self
-
-    def cross_validate_loocv(self, fractions):
-        self.cv_fractions = fractions
-        self.cv_method = 'loocv'
-        return self
-
-    def auto_converge(self, tolerance):
-        self.auto_convergence = tolerance
-        return self
-
-    def max_iterations(self, max_iter):
-        self._max_iterations = max_iter
-        return self
-
-    def with_diagnostics(self):
-        self.compute_diagnostics = True
-        return self
-
-    def with_residuals(self):
-        self.compute_residuals = True
-        return self
-
-    def with_robustness_weights(self):
-        self.compute_robustness_weights = True
-        return self
-
-    def with_all_diagnostics(self):
-        self.compute_diagnostics = True
-        self.compute_residuals = True
-        self.compute_robustness_weights = True
-        return self
-
-    def zero_weight_fallback(self, policy):
-        self._zero_weight_fallback = policy
-        return self
-
-    def fit(self, x, y):
-        x = np.asarray(x)
-        y = np.asarray(y)
-        if len(x) != len(y):
-            raise ValueError("x and y must have same length")
-        n = len(x)
-        idx = np.argsort(x)
-        x_sorted = x[idx]
-        y_sorted = y[idx]
-        delta = self._delta if self._delta is not None else 0.0
-        fraction = self._fraction
-        iterations = self._iterations
-        cv_scores = None
-
-        if self.cv_fractions is not None:
-            fracs = self.cv_fractions
-            scores = np.zeros(len(fracs))
-            cv_method = self.cv_method
-            for f_idx, f in enumerate(fracs):
-                if cv_method == 'simple':
-                    res = lowess(y_sorted, x_sorted, frac=f, it=self._iterations, delta=delta)
-                    y_smooth = res[:, 1]
-                    scores[f_idx] = np.sqrt(np.mean((y_sorted - y_smooth)**2))
-                elif cv_method == 'kfold':
-                    k = self.k
-                    fold_size = n // k
-                    fold_scores = np.zeros(k)
-                    for ff in range(k):
-                        start = ff * fold_size
-                        end = start + fold_size if ff < k - 1 else n
-                        train_idx = np.concatenate((np.arange(0, start), np.arange(end, n)))
-                        test_idx = np.arange(start, end)
-                        x_train = x_sorted[train_idx]
-                        y_train = y_sorted[train_idx]
-                        x_test = x_sorted[test_idx]
-                        y_test = y_sorted[test_idx]
-                        res = lowess(y_train, x_train, frac=f, it=self._iterations, delta=delta)
-                        # Interpolate or predict at x_test
-                        y_pred = np.interp(x_test, res[:, 0], res[:, 1])
-                        fold_scores[ff] = np.sqrt(np.mean((y_test - y_pred)**2))
-                    scores[f_idx] = np.mean(fold_scores)
-                elif cv_method == 'loocv':
-                    loo_score = 0
-                    for ff in range(n):
-                        train_idx = np.delete(np.arange(n), ff)
-                        x_train = x_sorted[train_idx]
-                        y_train = y_sorted[train_idx]
-                        x_test = x_sorted[ff:ff+1]
-                        y_test = y_sorted[ff]
-                        res = lowess(y_train, x_train, frac=f, it=self._iterations, delta=delta)
-                        y_pred = np.interp(x_test, res[:, 0], res[:, 1])
-                        loo_score += (y_test - y_pred[0])**2
-                    scores[f_idx] = np.sqrt(loo_score / n)
-            best_idx = np.argmin(scores)
-            fraction = fracs[best_idx]
-            cv_scores = scores
-
-        if self.auto_convergence is not None:
-            tol = self.auto_convergence
-            max_it = self._max_iterations
-            res = lowess(y_sorted, x_sorted, frac=fraction, it=0, delta=delta)
-            y_smooth = res[:, 1]
-            iterations_used = 0
-            while iterations_used < max_it:
-                iterations_used += 1
-                res_old = y_smooth.copy()
-                res = lowess(y_sorted, x_sorted, frac=fraction, it=iterations_used, delta=delta)
-                y_smooth = res[:, 1]
-                if np.max(np.abs(y_smooth - res_old)) < tol:
-                    break
-        else:
-            iterations_used = None
-            res = lowess(y_sorted, x_sorted, frac=fraction, it=iterations, delta=delta)
-            y_smooth = res[:, 1]
-
-        residuals = y_sorted - y_smooth
-        median_res = np.median(residuals)
-        residual_sd = np.median(np.abs(residuals - median_res)) * 1.4826 if len(residuals) > 0 else 0
-
-        diagnostics = None
-        if self.compute_diagnostics:
-            rmse = np.sqrt(np.mean(residuals**2)) if len(residuals) > 0 else 0
-            mae = np.mean(np.abs(residuals)) if len(residuals) > 0 else 0
-            r_squared = 1 - np.var(residuals) / np.var(y_sorted) if len(residuals) > 0 and np.var(y_sorted) > 0 else 0
-            aic = None  # Not computed
-            aicc = None
-            effective_df = None
-            diagnostics = {
-                'rmse': rmse,
-                'mae': mae,
-                'r_squared': r_squared,
-                'aic': aic,
-                'aicc': aicc,
-                'effective_df': effective_df,
-                'residual_sd': residual_sd
-            }
-
-        robustness_weights = None
-        if self.compute_robustness_weights and iterations > 0:
-            median_res = np.median(residuals)
-            mad = np.median(np.abs(residuals - median_res))
-            if mad == 0:
-                robustness_weights = np.ones(len(residuals))
-            else:
-                scaled = np.abs(residuals) / (6 * mad)
-                robustness_weights = np.where(scaled < 1, (1 - scaled**2)**2, 0)
-
-        result = {
-            'x': x_sorted.tolist(),
-            'y': y_smooth.tolist(),
-            'residuals': residuals.tolist() if self.compute_residuals else None,
-            'robustness_weights': robustness_weights.tolist() if robustness_weights is not None else None,
-            'diagnostics': diagnostics,
-            'iterations_used': iterations_used,
-            'fraction_used': fraction,
-            'cv_scores': cv_scores.tolist() if cv_scores is not None else None
+def run_scenario(name, x, y, frac, deg, iter, notes="", **kwargs):
+    print(f"Running scenario: {name}")
+    
+    # Configure LOESS
+    control = {'iterations': iter}
+    l = loess(x, y, span=frac, degree=deg, control=control, **kwargs)
+    l.fit()
+    
+    fitted = l.predict(x, stderror=False).values
+    
+    # Sanitize for JSON (numpy types)
+    x_list = x.tolist()
+    y_list = y.tolist()
+    fitted_list = fitted.tolist()
+    
+    data = {
+        "name": name,
+        "notes": notes,
+        "input": {
+            "x": x_list,
+            "y": y_list
+        },
+        "params": {
+            "fraction": frac,
+            "degree": deg,
+            "iterations": iter,
+            "extra": kwargs
+        },
+        "result": {
+            "fitted": fitted_list
         }
-        return result
+    }
+    
+    path = os.path.join(OUTPUT_DIR, f"{name}.json")
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
 
-# Main code
+def generate_data(n=100, kind='linear', noise=0.0, range_min=0.0, range_max=1.0, outlier_ratio=0.0):
+    np.random.seed(42) # Fixed seed for reproducibility
+    x = np.linspace(range_min, range_max, n)
+    
+    if kind == 'linear':
+        y = 2 * x + 1
+    elif kind == 'quadratic':
+        y = x**2
+    elif kind == 'sine':
+        y = np.sin(4 * x)
+    elif kind == 'step':
+        y = np.where(x < (range_min + range_max)/2, 0.0, 1.0)
+    elif kind == 'constant':
+        y = np.full_like(x, 5.0)
+    else:
+        y = x.copy()
+        
+    # Add noise
+    if noise > 0:
+        y += np.random.normal(0, noise, n)
+        
+    # Add outliers
+    if outlier_ratio > 0:
+        n_out = int(n * outlier_ratio)
+        indices = np.random.choice(n, n_out, replace=False)
+        y[indices] += 10.0 # Significant outlier
+        
+    return x, y
 
-np.random.seed(42)
+def main():
+    # 1. Tiny Linear
+    x, y = generate_data(n=10, kind='linear')
+    run_scenario("01_tiny_linear", x, y, frac=0.8, deg=1, iter=0)
+    
+    # 2. Small Quadratic
+    x, y = generate_data(n=50, kind='quadratic')
+    run_scenario("02_small_quadratic", x, y, frac=0.5, deg=2, iter=0)
+    
+    # 3. Sine Standard
+    x, y = generate_data(n=100, kind='sine', noise=0.1)
+    run_scenario("03_sine_standard", x, y, frac=0.3, deg=1, iter=0)
+    
+    # 4. Sine Robust
+    x, y = generate_data(n=100, kind='sine', outlier_ratio=0.05)
+    run_scenario("04_sine_robust", x, y, frac=0.3, deg=1, iter=4)
+    
+    # 5. Degree 0
+    x, y = generate_data(n=100, kind='sine')
+    run_scenario("05_degree_0", x, y, frac=0.2, deg=0, iter=0)
+    
+    # 6. Large scale
+    x, y = generate_data(n=500, kind='sine')
+    run_scenario("06_large_scale", x, y, frac=0.1, deg=1, iter=0)
+    
+    # 7. High Smoothness
+    x, y = generate_data(n=100, kind='linear', noise=0.5)
+    run_scenario("07_high_smoothness", x, y, frac=0.9, deg=1, iter=0)
+    
+    # 8. Low Smoothness
+    x, y = generate_data(n=100, kind='sine')
+    run_scenario("08_low_smoothness", x, y, frac=0.05, deg=1, iter=0, surface='direct')
+    
+    # 9. Quadratic Robust
+    x, y = generate_data(n=100, kind='quadratic', outlier_ratio=0.1)
+    run_scenario("09_quadratic_robust", x, y, frac=0.5, deg=2, iter=4)
+    
+    # 10. Constant Function
+    x, y = generate_data(n=50, kind='constant')
+    run_scenario("10_constant", x, y, frac=0.5, deg=1, iter=0)
+    
+    # 11. Step Function
+    x, y = generate_data(n=100, kind='step')
+    run_scenario("11_step_func", x, y, frac=0.4, deg=1, iter=0)
+    
+    # 12. End-effects Left
+    x, y = generate_data(n=50, kind='linear', noise=0.1)
+    run_scenario("12_end_effects_left", x, y, frac=0.3, deg=1, iter=0, notes="Check left boundary")
+    
+    # 13. End-effects Right (same data, just naming)
+    run_scenario("13_end_effects_right", x, y, frac=0.3, deg=1, iter=0, notes="Check right boundary")
+    
+    # 14. Sparse Data
+    x, y = generate_data(n=20, range_max=100.0, kind='linear', noise=1.0)
+    run_scenario("14_sparse_data", x, y, frac=0.6, deg=1, iter=0)
+    
+    # 15. Dense Data
+    x, y = generate_data(n=1000, kind='sine', noise=0.1)
+    run_scenario("15_dense_data", x, y, frac=0.01, deg=1, iter=0, surface='direct')
+    
+    # 16. Degree 2 Sine
+    x, y = generate_data(n=100, kind='sine')
+    run_scenario("16_degree_2_sine", x, y, frac=0.4, deg=2, iter=0)
+    
+    # 17. Robust Degree 0
+    x, y = generate_data(n=100, kind='linear', outlier_ratio=0.05)
+    run_scenario("17_robust_degree_0", x, y, frac=0.4, deg=0, iter=4)
+    
+    # 18. Iter 2 Check
+    x, y = generate_data(n=100, kind='sine', outlier_ratio=0.05)
+    run_scenario("18_iter_2", x, y, frac=0.4, deg=1, iter=2)
+    
+    # 19. Interpolate Exact
+    x, y = generate_data(n=50, kind='linear')
+    run_scenario("19_interpolate_exact", x, y, frac=0.5, deg=1, iter=0)
+    
+    # 20. Zero Variance
+    x, y = generate_data(n=10, kind='constant') # all 5.0
+    run_scenario("20_zero_variance", x, y, frac=0.5, deg=1, iter=0)
 
-n = 100
-x = np.linspace(0, 2 * np.pi, n)
-y = np.sin(x) + 0.5 * np.random.randn(n)
-outlier_idx = np.random.choice(n, 10, replace=False)
-y[outlier_idx] += 10 * np.random.randn(10)
-
-scenarios = [
-    ('basic', LowessBuilder()),
-    ('small_fraction', LowessBuilder().fraction(0.2)),
-    ('no_robust', LowessBuilder().iterations(0)),
-    ('more_robust', LowessBuilder().iterations(5)),
-    ('auto_converge', LowessBuilder().auto_converge(1e-4)),
-    ('cross_validate', LowessBuilder().cross_validate([0.2, 0.4, 0.6])),
-    ('kfold_cv', LowessBuilder().cross_validate_kfold([0.2, 0.4, 0.6], 5)),
-    ('loocv', LowessBuilder().cross_validate_loocv([0.2, 0.4, 0.6])),
-    ('delta_zero', LowessBuilder().delta(0)),
-    ('with_all_diagnostics', LowessBuilder().with_all_diagnostics()),
-]
-
-results = {}
-for name, builder in scenarios:
-    result = builder.fit(x, y)
-    results[name] = result
-
-# save results to a JSON file
-script_dir = Path(__file__).resolve().parent
-validation_dir = script_dir.parent
-
-out_dir = validation_dir / "output"
-out_dir.mkdir(parents=True, exist_ok=True)
-out_path = out_dir / "statsmodels_validate.json"
-with out_path.open("w", encoding="utf-8") as f:
-    json.dump(results, f, indent=2)
-
-print(f"Saved results to {out_path}")
+if __name__ == "__main__":
+    main()
