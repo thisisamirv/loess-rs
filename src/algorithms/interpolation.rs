@@ -73,7 +73,8 @@ pub struct InterpolationSurface<T: Float> {
     /// Layout: vertex 0 data, vertex 1 data, ... with (d+1) values per vertex.
     pub vertex_data: Vec<T>,
     /// Vertex coordinates (stored for refitting).
-    pub vertices: Vec<Vec<T>>,
+    /// Layout: [v0_d0, v0_d1, ..., v1_d0, v1_d1, ...]
+    pub vertices: Vec<T>,
     /// Spatial cells for lookup.
     pub cells: Vec<SurfaceCell<T>>,
     /// Root cell index.
@@ -134,7 +135,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         }
 
         // Build initial cells and vertices
-        let mut vertices: Vec<Vec<T>> = Vec::new();
+        let mut vertices: Vec<T> = Vec::new();
         let mut cells: Vec<SurfaceCell<T>> = Vec::new();
 
         // Create root cell with bounding box corners as vertices
@@ -142,17 +143,15 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let mut root_vertex_indices = Vec::with_capacity(num_corners);
 
         for corner_idx in 0..num_corners {
-            let mut vertex = Vec::with_capacity(dimensions);
+            root_vertex_indices.push(vertices.len() / dimensions);
             for d in 0..dimensions {
                 // Use lower or upper based on bit pattern
                 if (corner_idx >> d) & 1 == 0 {
-                    vertex.push(lower[d]);
+                    vertices.push(lower[d]);
                 } else {
-                    vertex.push(upper[d]);
+                    vertices.push(upper[d]);
                 }
             }
-            root_vertex_indices.push(vertices.len());
-            vertices.push(vertex);
         }
 
         let root_cell = SurfaceCell {
@@ -182,17 +181,16 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         // Disable the minimum cell diameter check
         let fd = T::zero();
 
-        // Subdivide cells using Cleveland's stopping criteria
-        Self::subdivide_cells(
+        // Build KD-tree using iterative algorithm (matches scikit-misc's ehg124)
+        Self::build_kdtree(
             &mut cells,
             &mut vertices,
             &mut pi,
-            0,
             x,
             dimensions,
             max_vertices,
-            fc, // min points per cell
-            fd, // min cell diameter (0 = disabled)
+            fc,
+            fd,
         );
 
         // Fit at each vertex - store value + d partial derivatives
@@ -200,7 +198,10 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let stride = dimensions + 1; // d+1 values per vertex
         let mut vertex_data = vec![T::zero(); vertices.len() * stride];
 
-        for (v_idx, vertex) in vertices.iter().enumerate() {
+        for v_idx in 0..vertices.len() / dimensions {
+            let v_start = v_idx * dimensions;
+            let vertex = &vertices[v_start..v_start + dimensions];
+
             // Find neighbors for this vertex using workspace buffers
             kdtree.find_k_nearest(
                 vertex,
@@ -265,7 +266,10 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let n = y.len() / self.dimensions;
         let stride = self.dimensions + 1; // d+1 values per vertex
 
-        for (v_idx, vertex) in self.vertices.iter().enumerate() {
+        for v_idx in 0..self.vertices.len() / self.dimensions {
+            let v_start = v_idx * self.dimensions;
+            let vertex = &self.vertices[v_start..v_start + self.dimensions];
+
             // Find neighbors for this vertex using workspace buffers
             kdtree.find_k_nearest(
                 vertex,
@@ -304,206 +308,268 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         }
     }
 
-    /// Subdivide cells recursively using Cleveland's stopping criteria.
+    /// Build KD-tree iteratively, matching scikit-misc's ehg124 algorithm.
     ///
-    /// Uses O(1) point counting via index ranges in the `pi` array.
-    /// Points are partitioned during subdivision like scikit-misc's ehg106/ehg124.
+    /// Uses a while loop with cell counter `p` instead of recursion.
+    /// Cells are processed in order while new cells are appended to the end.
     ///
-    /// Stops subdividing when:
+    /// Stopping criteria (Cleveland):
     /// - `points_in_cell <= fc` (minimum points per cell)
     /// - `cell_diameter <= fd` (minimum cell diameter)
-    /// - `vertices.len() >= max_vertices` (hard limit)
+    /// - `nv >= nvmax` or `nc >= ncmax` (resource limits)
     #[allow(clippy::too_many_arguments)]
-    fn subdivide_cells(
+    fn build_kdtree(
         cells: &mut Vec<SurfaceCell<T>>,
-        vertices: &mut Vec<Vec<T>>,
-        pi: &mut [usize], // Point index array (reordered in-place)
-        cell_idx: usize,
+        vertices: &mut Vec<T>,
+        pi: &mut [usize],
         x: &[T],
         dimensions: usize,
         max_vertices: usize,
-        fc: usize, // min points per cell (Cleveland's fc)
-        fd: T,     // min cell diameter (Cleveland's fd)
+        fc: usize,
+        fd: T,
     ) {
-        // Stop if we have reached the vertex limit
-        if vertices.len() >= max_vertices {
-            return;
-        }
+        let vc = 1usize << dimensions; // Number of corners per cell (2^d)
+        let max_cells = max_vertices.saturating_mul(2); // ncmax equivalent
 
-        let cell = &cells[cell_idx];
-        let lo = cell.point_lo;
-        let hi = cell.point_hi;
+        // p = current cell index being processed (0-indexed, ehg124 uses 1-indexed)
+        let mut p = 0;
 
-        // O(1) point count using index ranges!
-        let points_in_cell = if hi >= lo { hi - lo + 1 } else { 0 };
+        // Main loop: process cells from 0 to nc-1
+        // New cells are appended during processing
+        while p < cells.len() {
+            let nv = vertices.len() / dimensions;
+            let nc = cells.len();
 
-        // Compute cell diameter (Euclidean distance of diagonal)
-        let mut diam_sq = T::zero();
-        for d in 0..dimensions {
-            let range = cell.upper[d] - cell.lower[d];
-            diam_sq = diam_sq + range * range;
-        }
-        let diam = diam_sq.sqrt();
-
-        // Cleveland's stopping criteria:
-        // leaf = (points <= fc) OR (diameter <= fd)
-        let is_leaf = points_in_cell <= fc || diam <= fd;
-
-        if is_leaf || points_in_cell == 0 {
-            return;
-        }
-
-        // Additional safety: don't subdivide if we'd exceed vertex limits
-        let num_new_vertices = 1usize << (dimensions - 1);
-        if vertices.len() + num_new_vertices > max_vertices {
-            return;
-        }
-
-        // Find dimension with largest spread in point data (like Cleveland's ehg129)
-        let mut best_dim = 0;
-        let mut best_spread = T::zero();
-        for d in 0..dimensions {
-            let mut min_val = T::infinity();
-            let mut max_val = T::neg_infinity();
-            for &idx in &pi[lo..=hi] {
-                let val = x[idx * dimensions + d];
-                if val < min_val {
-                    min_val = val;
-                }
-                if val > max_val {
-                    max_val = val;
-                }
+            // Hard limits check (ehg124 lines 1891-1896)
+            if nc + 2 > max_cells || nv + vc / 2 > max_vertices {
+                p += 1;
+                continue;
             }
-            let spread = max_val - min_val;
-            if spread > best_spread {
-                best_spread = spread;
-                best_dim = d;
+
+            // Get cell bounds (point range)
+            let lo = cells[p].point_lo;
+            let hi = cells[p].point_hi;
+            let points_in_cell = if hi >= lo { hi - lo + 1 } else { 0 };
+
+            // Calculate cell diameter using vertex coordinates (ehg124 lines 1875-1882)
+            let parent_verts = &cells[p].vertex_indices;
+            let first_v = parent_verts[0];
+            let last_v = parent_verts[vc - 1];
+            let mut diam_sq = T::zero();
+            for d in 0..dimensions {
+                let diff = vertices[last_v * dimensions + d] - vertices[first_v * dimensions + d];
+                diam_sq = diam_sq + diff * diff;
             }
-        }
+            let diam = diam_sq.sqrt();
 
-        // Find median split point
-        let m = (lo + hi) / 2;
+            // Leaf determination (ehg124 lines 1883-1888)
+            let is_leaf = points_in_cell <= fc || diam <= fd || points_in_cell == 0;
 
-        // Partition points around median using Floyd-Rivest style selection
-        Self::partition_by_dim(pi, lo, hi, m, x, best_dim, dimensions);
+            if is_leaf {
+                p += 1;
+                continue;
+            }
 
-        let split_val = x[pi[m] * dimensions + best_dim];
-
-        // Create child cells with inherited bounds
-        let left_lower = cells[cell_idx].lower.clone();
-        let mut left_upper = cells[cell_idx].upper.clone();
-        left_upper[best_dim] = split_val;
-
-        let mut right_lower = cells[cell_idx].lower.clone();
-        let right_upper = cells[cell_idx].upper.clone();
-        right_lower[best_dim] = split_val;
-
-        // Create vertices for new split plane
-        let start_vertex_idx = vertices.len();
-
-        for corner_idx in 0..num_new_vertices {
-            let mut vertex = vec![T::zero(); dimensions];
-            vertex[best_dim] = split_val;
-
-            let mut bit_pos = 0;
-            for (d, v_d) in vertex.iter_mut().enumerate().take(dimensions) {
-                if d != best_dim {
-                    if (corner_idx >> bit_pos) & 1 == 0 {
-                        *v_d = cells[cell_idx].lower[d];
-                    } else {
-                        *v_d = cells[cell_idx].upper[d];
+            // Find dimension with largest spread (ehg129)
+            let mut best_dim = 0;
+            let mut best_spread = T::zero();
+            for d in 0..dimensions {
+                let mut min_val = T::infinity();
+                let mut max_val = T::neg_infinity();
+                for &idx in &pi[lo..=hi] {
+                    let val = x[idx * dimensions + d];
+                    if val < min_val {
+                        min_val = val;
                     }
-                    bit_pos += 1;
+                    if val > max_val {
+                        max_val = val;
+                    }
+                }
+                let spread = max_val - min_val;
+                if spread > best_spread {
+                    best_spread = spread;
+                    best_dim = d;
                 }
             }
-            vertices.push(vertex);
-        }
 
-        // Build vertex indices for child cells
-        let num_corners = 1usize << dimensions;
-        let mut left_vertices = vec![0; num_corners];
-        let mut right_vertices = vec![0; num_corners];
+            // Find and partition at median (ehg106 line 1902)
+            let mut m = (lo + hi) / 2;
+            Self::partition_by_dim(pi, lo, hi, m, x, best_dim, dimensions);
 
-        let parent_vertices = cells[cell_idx].vertex_indices.clone();
+            // Tie handling (ehg124 lines 1907-1928)
+            // All ties go with hi son. Search with alternating offsets.
+            let mut offset: isize = 0;
 
-        for child_corner_idx in 0..num_corners {
-            let dim_bit = (child_corner_idx >> best_dim) & 1;
+            loop {
+                // Line 1908: exit if m+offset out of bounds
+                let m_off = m as isize + offset;
+                if m_off >= hi as isize || m_off < lo as isize {
+                    break;
+                }
+                let m_off_usize = m_off as usize;
 
-            // Calculate "compressed" index (skipping best_dim) for new vertices
-            let mask = (1 << best_dim) - 1;
-            let lower_bits = child_corner_idx & mask;
-            let upper_bits = child_corner_idx >> (best_dim + 1);
-            let compressed_idx = (upper_bits << best_dim) | lower_bits;
+                // Lines 1909-1918: Re-partition only when offset != 0
+                if offset != 0 {
+                    let (lower, upper, check) = if offset < 0 {
+                        // Lines 1909-1912
+                        (lo, m_off_usize, m_off_usize)
+                    } else {
+                        // Lines 1914-1916
+                        (m_off_usize + 1, hi, m_off_usize + 1)
+                    };
+                    Self::partition_by_dim(pi, lower, upper, check, x, best_dim, dimensions);
+                }
 
-            // Left Child
-            if dim_bit == 0 {
-                left_vertices[child_corner_idx] = parent_vertices[child_corner_idx];
-            } else {
-                left_vertices[child_corner_idx] = start_vertex_idx + compressed_idx;
+                // Line 1919: check if tied
+                if m_off_usize < hi {
+                    let val_m = x[pi[m_off_usize] * dimensions + best_dim];
+                    let val_m1 = x[pi[m_off_usize + 1] * dimensions + best_dim];
+
+                    if val_m == val_m1 {
+                        // Lines 1920-1924: tied, alternate offset
+                        offset = -offset;
+                        if offset >= 0 {
+                            offset += 1;
+                        }
+                        continue;
+                    } else {
+                        // Lines 1925-1927: not tied, update m and exit
+                        m = m_off_usize;
+                        break;
+                    }
+                } else {
+                    // Can't check next element, treat as tied
+                    offset = -offset;
+                    if offset >= 0 {
+                        offset += 1;
+                    }
+                }
             }
 
-            // Right Child
-            if dim_bit == 0 {
-                right_vertices[child_corner_idx] = start_vertex_idx + compressed_idx;
-            } else {
-                right_vertices[child_corner_idx] = parent_vertices[child_corner_idx];
+            let split_val = x[pi[m] * dimensions + best_dim];
+
+            // Zero-volume check (ehg124 lines 1931-1935)
+            // Check if split_val equals vertex coordinate of parent cell
+            let first_v_coord = vertices[first_v * dimensions + best_dim];
+            let last_v_coord = vertices[last_v * dimensions + best_dim];
+            if split_val == first_v_coord || split_val == last_v_coord {
+                // Would create zero-volume cell, mark as leaf
+                p += 1;
+                continue;
             }
+
+            // --- Create new vertices (ehg125) ---
+            let num_new_vertices = 1usize << (dimensions - 1); // 2^(d-1)
+            let nv_before = vertices.len() / dimensions;
+            let mut split_plane_indices = Vec::with_capacity(num_new_vertices);
+
+            for corner_idx in 0..num_new_vertices {
+                // Build vertex coordinates
+                let mut corner_coords = vec![T::zero(); dimensions];
+                let mut bit_pos = 0;
+                for (d, coord) in corner_coords.iter_mut().enumerate().take(dimensions) {
+                    if d == best_dim {
+                        *coord = split_val;
+                    } else {
+                        if (corner_idx >> bit_pos) & 1 == 0 {
+                            *coord = cells[p].lower[d];
+                        } else {
+                            *coord = cells[p].upper[d];
+                        }
+                        bit_pos += 1;
+                    }
+                }
+
+                // Deduplication: search only in vertices that existed BEFORE this split (ehg125)
+                let mut found_idx = None;
+                for i in 0..nv_before {
+                    let start = i * dimensions;
+                    let mut matches = true;
+                    for d in 0..dimensions {
+                        if vertices[start + d] != corner_coords[d] {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    if matches {
+                        found_idx = Some(i);
+                        break;
+                    }
+                }
+
+                if let Some(idx) = found_idx {
+                    split_plane_indices.push(idx);
+                } else {
+                    if vertices.len() / dimensions >= max_vertices {
+                        p += 1;
+                        continue;
+                    }
+                    let idx = vertices.len() / dimensions;
+                    vertices.extend_from_slice(&corner_coords);
+                    split_plane_indices.push(idx);
+                }
+            }
+
+            // --- Build child cell vertex indices ---
+            let parent_vertices = cells[p].vertex_indices.clone();
+            let mut left_vertices = vec![0; vc];
+            let mut right_vertices = vec![0; vc];
+
+            for child_corner_idx in 0..vc {
+                let dim_bit = (child_corner_idx >> best_dim) & 1;
+                let mask = (1 << best_dim) - 1;
+                let lower_bits = child_corner_idx & mask;
+                let upper_bits = child_corner_idx >> (best_dim + 1);
+                let compressed_idx = (upper_bits << best_dim) | lower_bits;
+
+                if dim_bit == 0 {
+                    left_vertices[child_corner_idx] = parent_vertices[child_corner_idx];
+                    right_vertices[child_corner_idx] = split_plane_indices[compressed_idx];
+                } else {
+                    left_vertices[child_corner_idx] = split_plane_indices[compressed_idx];
+                    right_vertices[child_corner_idx] = parent_vertices[child_corner_idx];
+                }
+            }
+
+            // --- Create child cells ---
+            let mut left_upper = cells[p].upper.clone();
+            left_upper[best_dim] = split_val;
+            let mut right_lower = cells[p].lower.clone();
+            right_lower[best_dim] = split_val;
+
+            let left_idx = cells.len();
+            let right_idx = cells.len() + 1;
+
+            cells.push(SurfaceCell {
+                lower: cells[p].lower.clone(),
+                upper: left_upper,
+                vertex_indices: left_vertices,
+                children: None,
+                split_dim: None,
+                split_val: None,
+                point_lo: lo,
+                point_hi: m,
+            });
+
+            cells.push(SurfaceCell {
+                lower: right_lower,
+                upper: cells[p].upper.clone(),
+                vertex_indices: right_vertices,
+                children: None,
+                split_dim: None,
+                split_val: None,
+                point_lo: m + 1,
+                point_hi: hi,
+            });
+
+            // Update parent
+            cells[p].children = Some((left_idx, right_idx));
+            cells[p].split_dim = Some(best_dim);
+            cells[p].split_val = Some(split_val);
+
+            // Move to next cell (ehg124 line 1955)
+            p += 1;
         }
-
-        let left_idx = cells.len();
-        let right_idx = cells.len() + 1;
-
-        // Child cells inherit point ranges from partition
-        cells.push(SurfaceCell {
-            lower: left_lower,
-            upper: left_upper,
-            vertex_indices: left_vertices,
-            children: None,
-            split_dim: None,
-            split_val: None,
-            point_lo: lo,
-            point_hi: m,
-        });
-
-        cells.push(SurfaceCell {
-            lower: right_lower,
-            upper: right_upper,
-            vertex_indices: right_vertices,
-            children: None,
-            split_dim: None,
-            split_val: None,
-            point_lo: m + 1,
-            point_hi: hi,
-        });
-
-        // Update parent
-        cells[cell_idx].children = Some((left_idx, right_idx));
-        cells[cell_idx].split_dim = Some(best_dim);
-        cells[cell_idx].split_val = Some(split_val);
-
-        // Recurse
-        Self::subdivide_cells(
-            cells,
-            vertices,
-            pi,
-            left_idx,
-            x,
-            dimensions,
-            max_vertices,
-            fc,
-            fd,
-        );
-        Self::subdivide_cells(
-            cells,
-            vertices,
-            pi,
-            right_idx,
-            x,
-            dimensions,
-            max_vertices,
-            fc,
-            fd,
-        );
     }
 
     /// Partition pi[lo..=hi] so that pi[m] contains the median element along dimension dim.

@@ -141,12 +141,12 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
             for i in 0..n_neighbors {
                 let neighbor_idx = self.neighborhood.indices[i];
                 let dist = self.neighborhood.distances[i];
-                let u = (dist / max_distance).sqrt();
+                let u = dist / max_distance;
                 let kernel_w = self.weight_function.compute_weight(u);
                 let w = if self.use_robustness {
-                    (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
+                    kernel_w * self.robustness_weights[neighbor_idx]
                 } else {
-                    kernel_w.sqrt()
+                    kernel_w
                 };
                 weights.push(w);
             }
@@ -173,12 +173,12 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
             for i in 0..n_neighbors {
                 let neighbor_idx = self.neighborhood.indices[i];
                 let dist = self.neighborhood.distances[i];
-                let u = (dist / max_distance).sqrt();
+                let u = dist / max_distance;
                 let kernel_w = self.weight_function.compute_weight(u);
                 let w = if self.use_robustness {
-                    (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
+                    kernel_w * self.robustness_weights[neighbor_idx]
                 } else {
-                    kernel_w.sqrt()
+                    kernel_w
                 };
                 weights.push(w);
             }
@@ -240,12 +240,12 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
             for i in 0..n_neighbors {
                 let neighbor_idx = self.neighborhood.indices[i];
                 let dist = self.neighborhood.distances[i];
-                let u = (dist / max_distance).sqrt();
+                let u = dist / max_distance;
                 let kernel_w = self.weight_function.compute_weight(u);
                 let w = if self.use_robustness {
-                    (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
+                    kernel_w * self.robustness_weights[neighbor_idx]
                 } else {
-                    kernel_w.sqrt()
+                    kernel_w
                 };
                 weights.push(w);
             }
@@ -489,12 +489,12 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
         for i in 0..self.neighborhood.len() {
             let idx = self.neighborhood.indices[i];
             let dist = self.neighborhood.distances[i];
-            let u = (dist / bandwidth).sqrt();
+            let u = dist / bandwidth;
             let kernel_w = self.weight_function.compute_weight(u);
             let w = if self.use_robustness {
-                (kernel_w * self.robustness_weights[idx]).sqrt()
+                kernel_w * self.robustness_weights[idx]
             } else {
-                kernel_w.sqrt()
+                kernel_w
             };
             sum_wy = sum_wy + w * self.y[idx];
             sum_w = sum_w + w;
@@ -550,6 +550,21 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
                 );
                 xtw_x[..4].copy_from_slice(&a);
                 xtw_y[..2].copy_from_slice(&b);
+            }
+            (1, PolynomialDegree::Quadratic) => {
+                let mut a = [T::zero(); 9];
+                let mut b = [T::zero(); 3];
+                T::accumulate_1d_quadratic(
+                    self.x,
+                    self.y,
+                    &self.neighborhood.indices,
+                    weights,
+                    query_point[0],
+                    &mut a,
+                    &mut b,
+                );
+                xtw_x[..9].copy_from_slice(&a);
+                xtw_y[..3].copy_from_slice(&b);
             }
             (2, PolynomialDegree::Linear) => {
                 let mut a = [T::zero(); 9];
@@ -611,89 +626,44 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
             }
         }
 
-        // 3. Solve the system
-        let result = if n_coeffs == 2 {
-            let a = [xtw_x[0], xtw_x[1], xtw_x[2], xtw_x[3]];
-            let b = [xtw_y[0], xtw_y[1]];
-            T::solve_2x2(a, b).map(|coeffs| {
-                let leverage = if self.compute_leverage {
-                    a[3] / (a[0] * a[3] - a[1] * a[2])
-                } else {
-                    T::zero()
-                };
-                (coeffs[0], leverage)
-            })
-        } else if n_coeffs == 3 {
-            let a = [
-                xtw_x[0], xtw_x[1], xtw_x[2], xtw_x[3], xtw_x[4], xtw_x[5], xtw_x[6], xtw_x[7],
-                xtw_x[8],
-            ];
-            let b = [xtw_y[0], xtw_y[1], xtw_y[2]];
-            T::solve_3x3(a, b).map(|coeffs| {
-                let leverage = if self.compute_leverage {
-                    let det = a[0] * (a[4] * a[8] - a[5] * a[7])
-                        - a[1] * (a[3] * a[8] - a[5] * a[6])
-                        + a[2] * (a[3] * a[7] - a[4] * a[6]);
-                    (a[4] * a[8] - a[5] * a[7]) / det
-                } else {
-                    T::zero()
-                };
-                (coeffs[0], leverage)
-            })
-        } else if n_coeffs == 6 {
-            let mut a = [T::zero(); 36];
-            a.copy_from_slice(&xtw_x[..36]);
-            let b = [xtw_y[0], xtw_y[1], xtw_y[2], xtw_y[3], xtw_y[4], xtw_y[5]];
-            T::solve_6x6(a, b).map(|coeffs| {
-                let leverage = if self.compute_leverage {
-                    let mut e1 = [T::zero(); 6];
-                    e1[0] = T::one();
-                    T::solve_6x6(a, e1).map(|x| x[0]).unwrap_or(T::zero())
-                } else {
-                    T::zero()
-                };
-                (coeffs[0], leverage)
-            })
-        } else {
-            // General case using solve_normal
-            let mut col_norms = vec![T::one(); n_coeffs];
+        // Unified solvent using solve_normal with equilibration
+        let mut col_norms = vec![T::one(); n_coeffs];
+        for j in 0..n_coeffs {
+            let diag = xtw_x[j * n_coeffs + j];
+            if diag > T::epsilon() {
+                col_norms[j] = diag.sqrt();
+            }
+        }
+
+        // Apply equilibration: scale rows and columns of X'WX
+        for i in 0..n_coeffs {
             for j in 0..n_coeffs {
-                let diag = xtw_x[j * n_coeffs + j];
-                if diag > T::epsilon() {
-                    col_norms[j] = diag.sqrt();
-                }
+                let idx = i * n_coeffs + j;
+                xtw_x[idx] = xtw_x[idx] / (col_norms[i] * col_norms[j]);
             }
+            // Also scale X'Wy
+            xtw_y[i] = xtw_y[i] / col_norms[i];
+        }
 
-            // Apply equilibration: scale rows and columns of X'WX
-            for i in 0..n_coeffs {
-                for j in 0..n_coeffs {
-                    let idx = i * n_coeffs + j;
-                    xtw_x[idx] = xtw_x[idx] / (col_norms[i] * col_norms[j]);
-                }
-                // Also scale X'Wy
-                xtw_y[i] = xtw_y[i] / col_norms[i];
+        // Solve the equilibrated system
+        let result = T::solve_normal(xtw_x, xtw_y, n_coeffs).map(|mut coeffs| {
+            // Undo equilibration on the solution
+            for j in 0..n_coeffs {
+                coeffs[j] = coeffs[j] / col_norms[j];
             }
-
-            // Solve the equilibrated system
-            T::solve_normal(xtw_x, xtw_y, n_coeffs).map(|mut coeffs| {
-                // Undo equilibration on the solution
-                for j in 0..n_coeffs {
-                    coeffs[j] = coeffs[j] / col_norms[j];
-                }
-                let leverage = if self.compute_leverage {
-                    // Solve A * x = e1 to get (A^-1)_00
-                    // Simply solve against [1, 0, ... 0]
-                    let mut e1 = vec![T::zero(); n_coeffs];
-                    e1[0] = T::one();
-                    T::solve_normal(xtw_x, &e1, n_coeffs)
-                        .map(|x| x[0])
-                        .unwrap_or(T::zero())
-                } else {
-                    T::zero()
-                };
-                (coeffs[0], leverage)
-            })
-        };
+            let leverage = if self.compute_leverage {
+                // Solve A' * x' = e1 to get (A'^-1)_00
+                // Leverage = (A^-1)_00 = (A'^-1)_00 / col_norms[0]^2
+                let mut e1 = vec![T::zero(); n_coeffs];
+                e1[0] = T::one();
+                T::solve_normal(xtw_x, &e1, n_coeffs)
+                    .map(|x| x[0] / (col_norms[0] * col_norms[0]))
+                    .unwrap_or(T::zero())
+            } else {
+                T::zero()
+            };
+            (coeffs[0], leverage)
+        });
 
         if let Some(res) = result {
             return Some(res);

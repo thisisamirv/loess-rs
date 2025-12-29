@@ -1230,7 +1230,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 dims,
                 y_context,
                 i,
-                None, // query_point is None when query_idx is used
+                Some(query_point), // Pass explicit query point
                 neighborhood,
                 use_robustness,
                 robustness_weights,
