@@ -625,7 +625,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                             .smoothed
                     },
                     predictor,
-                    Some(cv_buffer),
+                    cv_buffer,
                 )
             };
 

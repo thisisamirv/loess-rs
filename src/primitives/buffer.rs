@@ -34,9 +34,7 @@
 //! * Thread-local automatic caching (buffers are explicitly passed to allow parallel execution with one buffer per thread).
 //! * Dynamic shrinking or aggressive memory reclamation (performance is prioritized over minimal footprint).
 
-use core::fmt::Debug;
-use num_traits::Float;
-
+// Feature-gated dependencies
 #[cfg(not(feature = "std"))]
 use alloc::collections::BinaryHeap;
 #[cfg(not(feature = "std"))]
@@ -45,6 +43,87 @@ use alloc::vec::Vec;
 use std::collections::BinaryHeap;
 #[cfg(feature = "std")]
 use std::vec::Vec;
+
+// External dependencies
+use core::fmt::Debug;
+use core::ops::{Deref, DerefMut};
+use num_traits::Float;
+
+// ============================================================================
+// Slot - Unified Vector Abstraction
+// ============================================================================
+
+/// A reusable vector slot with automatic capacity management.
+#[derive(Debug, Clone)]
+pub struct Slot<T>(Vec<T>);
+
+impl<T> Slot<T> {
+    /// Create a new slot with the given initial capacity.
+    #[inline]
+    pub fn new(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+
+    /// Ensure the slot has at least the given capacity.
+    /// Grows the underlying vector if needed; never shrinks.
+    #[inline]
+    pub fn ensure_capacity(&mut self, capacity: usize) {
+        if self.0.capacity() < capacity {
+            self.0.reserve(capacity - self.0.capacity());
+        }
+    }
+
+    /// Clear the slot (sets length to 0, preserves capacity).
+    #[inline]
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Get a reference to the underlying vector.
+    #[inline]
+    pub fn as_vec(&self) -> &Vec<T> {
+        &self.0
+    }
+
+    /// Get a mutable reference to the underlying vector.
+    #[inline]
+    pub fn as_vec_mut(&mut self) -> &mut Vec<T> {
+        &mut self.0
+    }
+
+    /// Consume the slot and return the underlying vector.
+    #[inline]
+    pub fn into_inner(self) -> Vec<T> {
+        self.0
+    }
+}
+
+impl<T> Default for Slot<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> Deref for Slot<T> {
+    type Target = Vec<T>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Slot<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> From<Vec<T>> for Slot<T> {
+    fn from(v: Vec<T>) -> Self {
+        Self(v)
+    }
+}
 
 // ============================================================================
 // Main Workspace
@@ -141,105 +220,97 @@ impl<N: Ord> NeighborhoodSearchBuffer<N> {
 }
 
 /// Persistent buffers for local regression to avoid allocations.
-pub struct FittingBuffer<T: Float> {
+pub struct FittingBuffer<T> {
     /// Weights for each neighbor.
-    pub weights: Vec<T>,
+    pub weights: Slot<T>,
     /// Normal matrix X'WX.
-    pub xtw_x: Vec<T>,
+    pub xtw_x: Slot<T>,
     /// Normal vector X'WY.
-    pub xtw_y: Vec<T>,
+    pub xtw_y: Slot<T>,
     /// Column norms for equilibration.
-    pub col_norms: Vec<T>,
+    pub col_norms: Slot<T>,
 }
 
-impl<T: Float> FittingBuffer<T> {
+impl<T> FittingBuffer<T> {
     /// Create a new fitting buffer with estimated capacities.
     pub fn new(k: usize, n_coeffs: usize) -> Self {
         Self {
-            weights: Vec::with_capacity(k),
-            xtw_x: Vec::with_capacity(n_coeffs * n_coeffs),
-            xtw_y: Vec::with_capacity(n_coeffs),
-            col_norms: Vec::with_capacity(n_coeffs),
+            weights: Slot::new(k),
+            xtw_x: Slot::new(n_coeffs * n_coeffs),
+            xtw_y: Slot::new(n_coeffs),
+            col_norms: Slot::new(n_coeffs),
         }
     }
 }
 
 /// Persistent buffers for global executor state.
-pub struct ExecutorBuffer<T: Float> {
+pub struct ExecutorBuffer<T> {
     /// Minimum values for each dimension.
-    pub mins: Vec<T>,
+    pub mins: Slot<T>,
     /// Maximum values for each dimension.
-    pub maxs: Vec<T>,
+    pub maxs: Slot<T>,
     /// Normalization scales for each dimension.
-    pub scales: Vec<T>,
+    pub scales: Slot<T>,
     /// Robustness weights for iterative refinement.
-    pub robustness_weights: Vec<T>,
+    pub robustness_weights: Slot<T>,
     /// Residuals for iterative refinement.
-    pub residuals: Vec<T>,
+    pub residuals: Slot<T>,
     /// Sorted residuals for median computation.
-    pub sorted_residuals: Vec<T>,
+    pub sorted_residuals: Slot<T>,
 }
 
-impl<T: Float> ExecutorBuffer<T> {
+impl<T> ExecutorBuffer<T> {
     /// Create a new executor buffer with given capacities.
     pub fn new(n: usize, dims: usize) -> Self {
         Self {
-            mins: Vec::with_capacity(dims),
-            maxs: Vec::with_capacity(dims),
-            scales: Vec::with_capacity(dims),
-            robustness_weights: Vec::with_capacity(n),
-            residuals: Vec::with_capacity(n),
-            sorted_residuals: Vec::with_capacity(n),
+            mins: Slot::new(dims),
+            maxs: Slot::new(dims),
+            scales: Slot::new(dims),
+            robustness_weights: Slot::new(n),
+            residuals: Slot::new(n),
+            sorted_residuals: Slot::new(n),
         }
     }
 
     /// Ensure buffers have enough capacity for given dimensions and points.
     pub fn ensure_capacity(&mut self, n: usize, dims: usize) {
-        if self.mins.capacity() < dims {
-            self.mins = Vec::with_capacity(dims);
-            self.maxs = Vec::with_capacity(dims);
-            self.scales = Vec::with_capacity(dims);
-        }
-        if self.robustness_weights.capacity() < n {
-            self.robustness_weights = Vec::with_capacity(n);
-            self.residuals = Vec::with_capacity(n);
-            self.sorted_residuals = Vec::with_capacity(n);
-        }
+        self.mins.ensure_capacity(dims);
+        self.maxs.ensure_capacity(dims);
+        self.scales.ensure_capacity(dims);
+        self.robustness_weights.ensure_capacity(n);
+        self.residuals.ensure_capacity(n);
+        self.sorted_residuals.ensure_capacity(n);
     }
 }
 
 /// Persistent buffers for cross-validation subsets.
-pub struct CVBuffer<T: Float> {
+pub struct CVBuffer<T> {
     /// Training subset x-values.
-    pub train_x: Vec<T>,
+    pub train_x: Slot<T>,
     /// Training subset y-values.
-    pub train_y: Vec<T>,
+    pub train_y: Slot<T>,
     /// Test subset x-values.
-    pub test_x: Vec<T>,
+    pub test_x: Slot<T>,
     /// Test subset y-values.
-    pub test_y: Vec<T>,
+    pub test_y: Slot<T>,
 }
 
-impl<T: Float> CVBuffer<T> {
+impl<T> CVBuffer<T> {
     /// Create a new CV buffer with given capacities.
     pub fn new(n: usize, dims: usize) -> Self {
         Self {
-            train_x: Vec::with_capacity(n * dims),
-            train_y: Vec::with_capacity(n),
-            test_x: Vec::with_capacity(n * dims),
-            test_y: Vec::with_capacity(n),
+            train_x: Slot::new(n * dims),
+            train_y: Slot::new(n),
+            test_x: Slot::new(n * dims),
+            test_y: Slot::new(n),
         }
     }
 
     /// Ensure buffers have enough capacity for given dimensions and points.
     pub fn ensure_capacity(&mut self, n: usize, dims: usize) {
-        if self.train_x.capacity() < n * dims {
-            self.train_x = Vec::with_capacity(n * dims);
-            self.test_x = Vec::with_capacity(n * dims);
-        }
-        if self.train_y.capacity() < n {
-            self.train_y = Vec::with_capacity(n);
-            self.test_y = Vec::with_capacity(n);
-        }
+        self.train_x.ensure_capacity(n * dims);
+        self.train_y.ensure_capacity(n);
+        self.test_x.ensure_capacity(n * dims);
+        self.test_y.ensure_capacity(n);
     }
 }

@@ -41,6 +41,7 @@ use std::vec::Vec;
 use core::cmp::Ordering::{self, Equal};
 use num_traits::Float;
 
+// Internal dependencies
 use crate::primitives::buffer::{NeighborhoodSearchBuffer, NeighborhoodStorage};
 
 // ============================================================================

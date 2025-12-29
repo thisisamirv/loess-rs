@@ -163,7 +163,7 @@ impl CVKind {
         seed: Option<u64>,
         mut smoother: F,
         mut predictor: Option<P>,
-        cv_buffer: Option<&mut CVBuffer<T>>,
+        cv_buffer: &mut CVBuffer<T>,
     ) -> (T, Vec<T>)
     where
         T: Float + Debug + Send + Sync + 'static,
@@ -381,7 +381,7 @@ impl CVKind {
         seed: Option<u64>,
         smoother: &mut F,
         mut predictor: Option<&mut P>,
-        mut cv_buffer: Option<&mut CVBuffer<T>>,
+        cv_buffer: &mut CVBuffer<T>,
     ) -> (T, Vec<T>)
     where
         T: Float + Debug + Send + Sync + 'static,
@@ -409,15 +409,7 @@ impl CVKind {
             }
         }
 
-        // Local scratch buffers if no workspace provided
-        let mut local_train_x: Vec<T> = Vec::new();
-        let mut local_train_y: Vec<T> = Vec::new();
-        let mut local_test_x: Vec<T> = Vec::new();
-        let mut local_test_y: Vec<T> = Vec::new();
-
-        if let Some(ref mut cv) = cv_buffer {
-            cv.ensure_capacity(n, dims); // Ensure subsets fit
-        }
+        cv_buffer.ensure_capacity(n, dims);
 
         for (frac_idx, &frac) in fractions.iter().enumerate() {
             let mut fold_rmses = Vec::with_capacity(k);
@@ -431,21 +423,12 @@ impl CVKind {
                 };
 
                 // Build training and test sets
-                let (tx, ty, tex, tey) = if let Some(ref mut cv) = cv_buffer {
-                    (
-                        &mut cv.train_x,
-                        &mut cv.train_y,
-                        &mut cv.test_x,
-                        &mut cv.test_y,
-                    )
-                } else {
-                    (
-                        &mut local_train_x,
-                        &mut local_train_y,
-                        &mut local_test_x,
-                        &mut local_test_y,
-                    )
-                };
+                let (tx, ty, tex, tey) = (
+                    &mut cv_buffer.train_x,
+                    &mut cv_buffer.train_y,
+                    &mut cv_buffer.test_x,
+                    &mut cv_buffer.test_y,
+                );
 
                 tx.clear();
                 ty.clear();
@@ -517,7 +500,7 @@ impl CVKind {
         fractions: &[T],
         smoother: &mut F,
         mut predictor: Option<&mut P>,
-        mut cv_buffer: Option<&mut CVBuffer<T>>,
+        cv_buffer: &mut CVBuffer<T>,
     ) -> (T, Vec<T>)
     where
         T: Float + Debug + Send + Sync + 'static,
@@ -527,13 +510,7 @@ impl CVKind {
         let n = x.len() / dims;
         let mut cv_scores = vec![T::zero(); fractions.len()];
 
-        // Local scratch buffers if no workspace provided
-        let mut local_train_x = Vec::new();
-        let mut local_train_y = Vec::new();
-
-        if let Some(ref mut cv) = cv_buffer {
-            cv.ensure_capacity(n, dims);
-        }
+        cv_buffer.ensure_capacity(n, dims);
 
         let mut test_point = vec![T::zero(); dims];
 
@@ -542,11 +519,7 @@ impl CVKind {
 
             for i in 0..n {
                 // Build training set (all points except i)
-                let (tx, ty) = if let Some(ref mut cv) = cv_buffer {
-                    (&mut cv.train_x, &mut cv.train_y)
-                } else {
-                    (&mut local_train_x, &mut local_train_y)
-                };
+                let (tx, ty) = (&mut cv_buffer.train_x, &mut cv_buffer.train_y);
 
                 tx.clear();
                 ty.clear();
