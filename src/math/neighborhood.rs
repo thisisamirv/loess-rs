@@ -29,11 +29,7 @@
 
 // Feature-gated imports
 #[cfg(not(feature = "std"))]
-use alloc::collections::BinaryHeap;
-#[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
-#[cfg(feature = "std")]
-use std::collections::BinaryHeap;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
@@ -261,17 +257,21 @@ impl<T: Float> Default for Neighborhood<T> {
 // KD-Tree Implementation
 // ============================================================================
 
+/// Sentinel value indicating no child node.
+const NO_CHILD: usize = usize::MAX;
+
 /// A node in the KD-tree.
-#[derive(Debug, Clone)]
+/// Uses sentinel values instead of Option for better performance.
+#[derive(Debug, Clone, Copy)]
 struct KDNode<T: Float> {
     /// Index of the point in the original flattened data array.
     index: usize,
-    /// Left child index.
-    left: Option<usize>,
-    /// Right child index.
-    right: Option<usize>,
+    /// Left child index (NO_CHILD if none).
+    left: usize,
+    /// Right child index (NO_CHILD if none).
+    right: usize,
     /// Splitting dimension.
-    split_dim: usize,
+    split_dim: u8,
     /// Splitting value at this node.
     split_val: T,
 }
@@ -280,9 +280,9 @@ struct KDNode<T: Float> {
 #[derive(Debug, Clone)]
 pub struct KDTree<T: Float> {
     nodes: Vec<KDNode<T>>,
-    points: Vec<T>, // Flattened point data [n][dims]
+    points: Vec<T>,
     dimensions: usize,
-    root: Option<usize>,
+    root: usize,
 }
 
 impl<T: Float> KDTree<T> {
@@ -312,7 +312,7 @@ impl<T: Float> KDTree<T> {
         buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
         neighborhood: &mut Neighborhood<T>,
     ) {
-        if k == 0 || self.root.is_none() {
+        if k == 0 || self.root == NO_CHILD {
             neighborhood.max_distance = T::zero();
             neighborhood.indices.clear();
             neighborhood.distances.clear();
@@ -320,15 +320,7 @@ impl<T: Float> KDTree<T> {
         }
 
         buffer.clear();
-        let root_idx = self.root.unwrap();
-        self.search_recursive(
-            root_idx,
-            query,
-            k,
-            dist_calc,
-            exclude_self,
-            &mut buffer.heap,
-        );
+        self.search_iterative(query, k, dist_calc, exclude_self, buffer);
 
         // Copy to sort vector
         buffer.sort_vec.clear();
@@ -355,9 +347,9 @@ impl<T: Float> KDTree<T> {
         indices: &mut [usize],
         depth: usize,
         nodes: &mut Vec<KDNode<T>>,
-    ) -> Option<usize> {
+    ) -> usize {
         if indices.is_empty() {
-            return None;
+            return NO_CHILD;
         }
 
         let axis = depth % dims;
@@ -382,9 +374,9 @@ impl<T: Float> KDTree<T> {
 
         nodes.push(KDNode {
             index: point_idx,
-            left: None,
-            right: None,
-            split_dim: axis,
+            left: NO_CHILD,
+            right: NO_CHILD,
+            split_dim: axis as u8,
             split_val,
         });
 
@@ -395,62 +387,78 @@ impl<T: Float> KDTree<T> {
         nodes[current_node_idx].left = left;
         nodes[current_node_idx].right = right;
 
-        Some(current_node_idx)
+        current_node_idx
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn search_recursive<D: PointDistance<T>>(
+    /// Iterative k-nearest neighbor search using explicit stack.
+    /// This avoids function call overhead and improves cache locality.
+    #[inline]
+    fn search_iterative<D: PointDistance<T>>(
         &self,
-        node_idx: usize,
         query: &[T],
         k: usize,
         dist_calc: &D,
         exclude_self: Option<usize>,
-        heap: &mut BinaryHeap<NodeDistance<T>>,
+        buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
     ) {
-        let node = &self.nodes[node_idx];
         let d = self.dimensions;
+        let heap = &mut buffer.heap;
+        let stack = &mut buffer.stack;
 
-        if exclude_self != Some(node.index) {
-            let offset = node.index * d;
-            let node_point = &self.points[offset..offset + d];
-            let dist = dist_calc.distance(query, node_point);
+        // Track max distance
+        let mut max_dist = T::infinity();
 
-            if heap.len() < k {
-                heap.push(NodeDistance(node.index, dist));
-            } else if let Some(mut top) = heap.peek_mut() {
-                if dist < top.1 {
-                    *top = NodeDistance(node.index, dist);
+        stack.push(self.root);
+
+        while let Some(node_idx) = stack.pop() {
+            let node = &self.nodes[node_idx];
+
+            // Process current node
+            if exclude_self != Some(node.index) {
+                let offset = node.index * d;
+                let node_point = &self.points[offset..offset + d];
+                let dist = dist_calc.distance(query, node_point);
+
+                if heap.len() < k {
+                    heap.push(NodeDistance(node.index, dist));
+                    if heap.len() == k {
+                        // Heap is now full, cache the max distance
+                        max_dist = heap.peek().map(|nd| nd.1).unwrap_or(T::infinity());
+                    }
+                } else if dist < max_dist {
+                    // Replace the worst neighbor
+                    if let Some(mut top) = heap.peek_mut() {
+                        *top = NodeDistance(node.index, dist);
+                    }
+                    // Update cached max distance
+                    max_dist = heap.peek().map(|nd| nd.1).unwrap_or(T::infinity());
                 }
             }
-        }
 
-        let split_dim = node.split_dim;
-        let diff = query[split_dim] - node.split_val;
+            // Determine near/far children
+            let split_dim = node.split_dim as usize;
+            let diff = query[split_dim] - node.split_val;
 
-        let (near, far) = if diff <= T::zero() {
-            (node.left, node.right)
-        } else {
-            (node.right, node.left)
-        };
-
-        if let Some(near_idx) = near {
-            self.search_recursive(near_idx, query, k, dist_calc, exclude_self, heap);
-        }
-
-        if let Some(far_idx) = far {
-            let can_skip = if heap.len() < k {
-                false
-            } else if let Some(top) = heap.peek() {
-                let dist_to_plane =
-                    dist_calc.split_distance(split_dim, node.split_val, query[split_dim]);
-                dist_to_plane >= top.1
+            let (near, far) = if diff <= T::zero() {
+                (node.left, node.right)
             } else {
-                false
+                (node.right, node.left)
             };
 
-            if !can_skip {
-                self.search_recursive(far_idx, query, k, dist_calc, exclude_self, heap);
+            // Check if we need to explore the far subtree
+            // We push far first so near is processed first (LIFO)
+            if far != NO_CHILD {
+                let dist_to_plane =
+                    dist_calc.split_distance(split_dim, node.split_val, query[split_dim]);
+                // Only explore far if heap is not full OR plane is closer than worst neighbor
+                if heap.len() < k || dist_to_plane < max_dist {
+                    stack.push(far);
+                }
+            }
+
+            // Always explore near subtree if it exists
+            if near != NO_CHILD {
+                stack.push(near);
             }
         }
     }

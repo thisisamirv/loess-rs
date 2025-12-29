@@ -573,6 +573,12 @@ fn test_loess_rs_result_helpers() {
         iterations_used: Some(0),
         fraction_used: 0.5,
         cv_scores: Some(vec![0.3, 0.1, 0.2]),
+        enp: None,
+        trace_hat: None,
+        delta1: None,
+        delta2: None,
+        residual_scale: None,
+        leverage: None,
     };
 
     // Best CV score
@@ -602,6 +608,12 @@ fn test_has_cv_scores() {
         iterations_used: None,
         fraction_used: 0.5,
         cv_scores: Some(vec![0.1, 0.2]),
+        enp: None,
+        trace_hat: None,
+        delta1: None,
+        delta2: None,
+        residual_scale: None,
+        leverage: None,
     };
     assert!(lr_with.has_cv_scores());
 

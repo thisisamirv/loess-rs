@@ -42,6 +42,7 @@ use num_traits::Float;
 
 // Internal dependencies
 use crate::math::kernel::WeightFunction;
+use crate::math::linalg::FloatLinalg;
 use crate::math::neighborhood::Neighborhood;
 use crate::primitives::buffer::FittingBuffer;
 
@@ -370,7 +371,7 @@ impl ZeroWeightFallback {
 // ============================================================================
 
 /// Context containing all data needed to fit a single point (unified 1D/nD).
-pub struct RegressionContext<'a, T: Float> {
+pub struct RegressionContext<'a, T: FloatLinalg> {
     /// Flattened array of predictor values.
     /// For 1D: [x₁, x₂, ...]
     /// For nD: [x₁₁, x₁₂, ..., x₂₁, x₂₂, ...]
@@ -417,7 +418,7 @@ pub struct RegressionContext<'a, T: Float> {
 // WLS Fitting (Unified)
 // ============================================================================
 
-impl<'a, T: Float + 'static> RegressionContext<'a, T> {
+impl<'a, T: FloatLinalg> RegressionContext<'a, T> {
     /// Returns the (predicted value, leverage) at the query point.
     pub fn fit(&mut self) -> Option<(T, T)> {
         let n_neighbors = self.neighborhood.len();
@@ -645,7 +646,7 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
             }
 
             // Solve
-            let beta = LinearSolver::solve_symmetric(&buf.xtw_x, &buf.xtw_y, n_coeffs);
+            let beta = T::solve_normal(&buf.xtw_x, &buf.xtw_y, n_coeffs);
 
             if let Some(mut coeffs) = beta {
                 // Undo equilibration
@@ -743,7 +744,7 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
             }
 
             // Solve
-            let beta = LinearSolver::solve_symmetric(&xtw_x, &xtw_y, n_coeffs);
+            let beta = T::solve_normal(&xtw_x, &xtw_y, n_coeffs);
 
             if let Some(mut coeffs) = beta {
                 // Undo equilibration
@@ -847,7 +848,10 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
         n_coeffs: usize,
         xtw_x: &mut [T],
         xtw_y: &mut [T],
-    ) -> Option<(T, T)> {
+    ) -> Option<(T, T)>
+    where
+        T: FloatLinalg,
+    {
         let n_neighbors = self.neighborhood.len();
 
         // Need at least as many neighbors as coefficients for a proper fit
@@ -941,7 +945,7 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
         }
 
         // 3. Solve the equilibrated system
-        let beta = LinearSolver::solve_symmetric(xtw_x, xtw_y, n_coeffs);
+        let beta = T::solve_normal(xtw_x, xtw_y, n_coeffs);
 
         if let Some(mut coeffs) = beta {
             // Undo equilibration on the solution
@@ -954,7 +958,7 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
                 let mut e1 = vec![T::zero(); n_coeffs];
                 e1[0] = T::one();
 
-                LinearSolver::solve_symmetric(xtw_x, &e1, n_coeffs)
+                T::solve_normal(xtw_x, &e1, n_coeffs)
                     .map(|x| x[0])
                     .unwrap_or(T::zero())
             } else {
@@ -1056,73 +1060,3 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
 // ============================================================================
 // Linear Solver
 // ============================================================================
-
-/// Helper struct for solving linear systems (e.g., Cholesky decomposition).
-pub struct LinearSolver;
-
-impl LinearSolver {
-    /// Solve Ax = b where A is symmetric positive definite
-    pub fn solve_symmetric<T: Float>(a: &[T], b: &[T], n: usize) -> Option<Vec<T>> {
-        let l = Self::cholesky_decompose(a, n)?;
-
-        // Forward Ly = b
-        let mut y = vec![T::zero(); n];
-        for i in 0..n {
-            let mut sum = b[i];
-            for j in 0..i {
-                sum = sum - l[i * n + j] * y[j];
-            }
-            if l[i * n + i].abs() <= T::epsilon() {
-                return None;
-            }
-            y[i] = sum / l[i * n + i];
-        }
-
-        // Backward Lᵀx = y
-        let mut x = vec![T::zero(); n];
-        for i in (0..n).rev() {
-            let mut sum = y[i];
-            for j in (i + 1)..n {
-                sum = sum - l[j * n + i] * x[j];
-            }
-            if l[i * n + i].abs() <= T::epsilon() {
-                return None;
-            }
-            x[i] = sum / l[i * n + i];
-        }
-        Some(x)
-    }
-
-    /// Cholesky decomposition A = LLᵀ
-    pub fn cholesky_decompose<T: Float>(a: &[T], n: usize) -> Option<Vec<T>> {
-        let mut l = vec![T::zero(); n * n];
-
-        for i in 0..n {
-            for j in 0..=i {
-                let mut sum = a[i * n + j];
-                for k in 0..j {
-                    sum = sum - l[i * n + k] * l[j * n + k];
-                }
-
-                if i == j {
-                    if sum <= T::zero() {
-                        // Regularization
-                        let reg = T::from(1e-10).unwrap();
-                        sum = sum + reg;
-                        if sum <= T::zero() {
-                            return None;
-                        }
-                    }
-                    l[i * n + j] = sum.sqrt();
-                } else {
-                    let diag = l[j * n + j];
-                    if diag.abs() <= T::epsilon() {
-                        return None;
-                    }
-                    l[i * n + j] = sum / diag;
-                }
-            }
-        }
-        Some(l)
-    }
-}

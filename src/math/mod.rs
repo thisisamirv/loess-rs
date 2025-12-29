@@ -5,6 +5,8 @@
 //! This layer provides pure mathematical functions used throughout LOESS:
 //! - Kernel functions for distance-based weighting
 //! - Robust statistics (MAD)
+//! - Linear algebra backends
+//! - Hat matrix computation
 //!
 //! These are reusable mathematical building blocks with no algorithm-specific logic.
 //!
@@ -40,3 +42,9 @@ pub mod distance;
 
 /// nD neighborhood search (KD-Tree implementation).
 pub mod neighborhood;
+
+/// Linear algebra backend abstraction.
+pub mod linalg;
+
+/// Hat matrix and delta parameter computation.
+pub mod hat_matrix;

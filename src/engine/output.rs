@@ -102,6 +102,32 @@ pub struct LoessResult<T> {
 
     /// RMSE scores for each tested fraction during cross-validation.
     pub cv_scores: Option<Vec<T>>,
+
+    // ========================================================================
+    // Hat Matrix Statistics (scikit-misc parity)
+    // ========================================================================
+    /// Equivalent Number of Parameters (trace of hat matrix).
+    /// This measures the effective model complexity.
+    pub enp: Option<T>,
+
+    /// Trace of the hat matrix (same as ENP for LOESS).
+    pub trace_hat: Option<T>,
+
+    /// Delta1 for proper SE computation: tr((I-L)(I-L)').
+    /// Used as the denominator for residual scale estimation.
+    pub delta1: Option<T>,
+
+    /// Delta2 for SE computation: tr(((I-L)(I-L)')²).
+    /// Used for confidence interval width adjustment.
+    pub delta2: Option<T>,
+
+    /// Residual scale estimate: sqrt(RSS / delta1).
+    /// This is the proper estimate of sigma for inference.
+    pub residual_scale: Option<T>,
+
+    /// Leverage (hat matrix diagonal) at each point.
+    /// l_ii measures how much influence point i has on its own fitted value.
+    pub leverage: Option<Vec<T>>,
 }
 
 impl<T: Float> LoessResult<T> {

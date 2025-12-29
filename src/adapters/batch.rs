@@ -40,7 +40,6 @@ use std::vec::Vec;
 
 // External dependencies
 use core::fmt::Debug;
-use num_traits::Float;
 
 // Internal dependencies
 use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
@@ -55,7 +54,9 @@ use crate::evaluation::diagnostics::Diagnostics;
 use crate::evaluation::intervals::IntervalMethod;
 use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::DistanceMetric;
+use crate::math::hat_matrix::HatMatrixStats;
 use crate::math::kernel::WeightFunction;
+use crate::math::linalg::FloatLinalg;
 use crate::primitives::backend::Backend;
 use crate::primitives::errors::LoessError;
 
@@ -65,7 +66,7 @@ use crate::primitives::errors::LoessError;
 
 /// Builder for batch LOESS processor.
 #[derive(Debug, Clone)]
-pub struct BatchLoessBuilder<T: Float> {
+pub struct BatchLoessBuilder<T: FloatLinalg> {
     /// Smoothing fraction (span)
     pub fraction: T,
 
@@ -161,13 +162,13 @@ pub struct BatchLoessBuilder<T: Float> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: Float> Default for BatchLoessBuilder<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> Default for BatchLoessBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float> BatchLoessBuilder<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> BatchLoessBuilder<T> {
     /// Create a new batch LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -391,11 +392,11 @@ impl<T: Float> BatchLoessBuilder<T> {
 // ============================================================================
 
 /// Batch LOESS processor.
-pub struct BatchLoess<T: Float> {
+pub struct BatchLoess<T: FloatLinalg> {
     config: BatchLoessBuilder<T>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
+impl<T: FloatLinalg + Debug + Send + Sync + 'static> BatchLoess<T> {
     /// Perform LOESS smoothing on the provided data.
     pub fn fit(self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
         Validator::validate_inputs(x, y, self.config.dimensions)?;
@@ -485,11 +486,31 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
             None
         };
 
+        // Compute hat matrix statistics from leverage if available
+        // (Must happen before residuals is moved into residuals_out)
+        let (enp, trace_hat, delta1, delta2, residual_scale, leverage_out) =
+            if let Some(lev) = result.leverage {
+                let stats = HatMatrixStats::from_leverage(lev);
+                // Compute RSS (residual sum of squares)
+                let rss = residuals.iter().fold(T::zero(), |acc, &r| acc + r * r);
+                let res_scale = stats.compute_residual_scale(rss);
+                (
+                    Some(stats.trace),
+                    Some(stats.trace),
+                    Some(stats.delta1),
+                    Some(stats.delta2),
+                    Some(res_scale),
+                    Some(stats.leverage),
+                )
+            } else {
+                (None, None, None, None, None, None)
+            };
+
         // Compute intervals
         let (conf_lower, conf_upper, pred_lower, pred_upper) =
             if let Some(method) = &self.config.interval_type {
                 if let Some(se) = &std_errors {
-                    method.compute_intervals(&y_smooth, se, &residuals)?
+                    method.compute_intervals(&y_smooth, se, &residuals, delta1, delta2)?
                 } else {
                     (None, None, None, None)
                 }
@@ -526,6 +547,12 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchLoess<T> {
             iterations_used,
             cv_scores,
             diagnostics,
+            enp,
+            trace_hat,
+            delta1,
+            delta2,
+            residual_scale,
+            leverage: leverage_out,
         })
     }
 }

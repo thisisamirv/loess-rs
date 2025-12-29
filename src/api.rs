@@ -31,8 +31,7 @@ use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
-// External dependencies
-use num_traits::Float;
+use core::fmt::Debug;
 
 // Internal dependencies
 use crate::adapters::batch::BatchLoessBuilder;
@@ -41,6 +40,7 @@ use crate::adapters::streaming::StreamingLoessBuilder;
 use crate::engine::executor::{CVPassFn, IntervalPassFn, SmoothPassFn};
 use crate::evaluation::cv::{CVConfig, CVKind};
 use crate::evaluation::intervals::IntervalMethod;
+use crate::math::linalg::FloatLinalg;
 use crate::primitives::backend::Backend;
 
 // Publicly re-exported types
@@ -64,7 +64,7 @@ pub mod Adapter {
 
 /// Fluent builder for configuring LOESS parameters and execution modes.
 #[derive(Debug, Clone)]
-pub struct LoessBuilder<T> {
+pub struct LoessBuilder<T: FloatLinalg + Debug + Send + Sync> {
     /// Smoothing fraction (0..1].
     pub fraction: Option<T>,
 
@@ -171,13 +171,13 @@ pub struct LoessBuilder<T> {
     pub duplicate_param: Option<&'static str>,
 }
 
-impl<T: Float> Default for LoessBuilder<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> Default for LoessBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float> LoessBuilder<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> LoessBuilder<T> {
     /// Select an execution adapter to transition to an execution builder.
     pub fn adapter<A>(self, _adapter: A) -> A::Output
     where
@@ -511,7 +511,7 @@ impl<T: Float> LoessBuilder<T> {
 }
 
 /// Trait for transitioning from a generic builder to an execution builder.
-pub trait LoessAdapter<T: Float> {
+pub trait LoessAdapter<T: FloatLinalg + Debug + Send + Sync> {
     /// The output execution builder.
     type Output;
 
@@ -523,7 +523,7 @@ pub trait LoessAdapter<T: Float> {
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
 
-impl<T: Float> LoessAdapter<T> for Batch {
+impl<T: FloatLinalg + Debug + Send + Sync> LoessAdapter<T> for Batch {
     type Output = BatchLoessBuilder<T>;
 
     fn convert(builder: LoessBuilder<T>) -> Self::Output {
@@ -618,7 +618,7 @@ impl<T: Float> LoessAdapter<T> for Batch {
 #[derive(Debug, Clone, Copy)]
 pub struct Streaming;
 
-impl<T: Float> LoessAdapter<T> for Streaming {
+impl<T: FloatLinalg + Debug + Send + Sync> LoessAdapter<T> for Streaming {
     type Output = StreamingLoessBuilder<T>;
 
     fn convert(builder: LoessBuilder<T>) -> Self::Output {
@@ -713,7 +713,7 @@ impl<T: Float> LoessAdapter<T> for Streaming {
 #[derive(Debug, Clone, Copy)]
 pub struct Online;
 
-impl<T: Float> LoessAdapter<T> for Online {
+impl<T: FloatLinalg + Debug + Send + Sync> LoessAdapter<T> for Online {
     type Output = OnlineLoessBuilder<T>;
 
     fn convert(builder: LoessBuilder<T>) -> Self::Output {

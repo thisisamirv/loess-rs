@@ -60,6 +60,7 @@ use crate::evaluation::intervals::IntervalMethod;
 use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
+use crate::math::linalg::FloatLinalg;
 use crate::math::neighborhood::{
     KDTree, Neighborhood, NodeDistance, PointDistance, floyd_rivest_select,
 };
@@ -70,14 +71,14 @@ use crate::primitives::window::Window;
 /// Standard LOESS distance calculator.
 ///
 /// Implements `PointDistance` using either Euclidean or Normalized Euclidean metrics.
-pub struct LoessDistanceCalculator<'a, T: Float> {
+pub struct LoessDistanceCalculator<'a, T: FloatLinalg> {
     /// The distance metric to use (Euclidean or Normalized).
     pub metric: DistanceMetric<T>,
     /// Normalization scales for each dimension (used if metric is Normalized).
     pub scales: &'a [T],
 }
 
-impl<'a, T: Float> PointDistance<T> for LoessDistanceCalculator<'a, T> {
+impl<'a, T: FloatLinalg> PointDistance<T> for LoessDistanceCalculator<'a, T> {
     fn distance(&self, a: &[T], b: &[T]) -> T {
         match &self.metric {
             DistanceMetric::Normalized => DistanceMetric::normalized(a, b, self.scales),
@@ -175,7 +176,7 @@ pub type FitPassFn<T> = fn(
 
 /// Output from LOESS execution.
 #[derive(Debug, Clone)]
-pub struct ExecutorOutput<T> {
+pub struct ExecutorOutput<T: FloatLinalg> {
     /// Smoothed y-values.
     pub smoothed: Vec<T>,
 
@@ -193,6 +194,10 @@ pub struct ExecutorOutput<T> {
 
     /// Final robustness weights from iterative refinement.
     pub robustness_weights: Vec<T>,
+
+    /// Leverage values (hat matrix diagonal) for each point.
+    /// Only computed when intervals are requested.
+    pub leverage: Option<Vec<T>>,
 }
 
 // ============================================================================
@@ -201,7 +206,7 @@ pub struct ExecutorOutput<T> {
 
 /// Configuration for LOESS execution.
 #[derive(Debug, Clone)]
-pub struct LoessConfig<T> {
+pub struct LoessConfig<T: FloatLinalg> {
     /// Smoothing fraction (0, 1].
     /// If `None` and `cv_fractions` are provided, bandwidth selection is performed.
     pub fraction: Option<T>,
@@ -283,7 +288,7 @@ pub struct LoessConfig<T> {
     pub parallel: bool,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for LoessConfig<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> Default for LoessConfig<T> {
     fn default() -> Self {
         Self {
             fraction: None,
@@ -315,7 +320,7 @@ impl<T: Float + Debug + Send + Sync + 'static> Default for LoessConfig<T> {
 
 /// Unified executor for LOESS smoothing operations.
 #[derive(Debug, Clone)]
-pub struct LoessExecutor<T: Float> {
+pub struct LoessExecutor<T: FloatLinalg> {
     /// Smoothing fraction (0, 1].
     pub fraction: T,
 
@@ -380,13 +385,13 @@ pub struct LoessExecutor<T: Float> {
     pub parallel: bool,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> Default for LoessExecutor<T> {
+impl<T: FloatLinalg + Debug + Send + Sync + 'static> Default for LoessExecutor<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
+impl<T: FloatLinalg + Debug + Send + Sync + 'static> LoessExecutor<T> {
     // ========================================================================
     // Constructor and Builder Methods
     // ========================================================================
@@ -831,6 +836,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 &mut workspace.search_buffer,
                 &mut workspace.neighborhood,
                 &mut workspace.fitting_buffer,
+                None, // No leverage collection during initial fit
             );
         }
 
@@ -977,29 +983,72 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                         &mut workspace.search_buffer,
                         &mut workspace.neighborhood,
                         &mut workspace.fitting_buffer,
+                        None, // No leverage collection during robustness iterations
                     );
                 }
             }
         }
 
-        // Standard errors
-        let se = if confidence_method.is_some() {
-            // Estimate residual standard deviation (sigma) robustly
-            for i in 0..n {
-                workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
-            }
-            let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
-            let median_idx = n / 2;
-            floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {
-                a.partial_cmp(b).unwrap_or(Equal)
-            });
-            let median_residual = sorted_residuals[median_idx];
-            let sigma = median_residual * T::from(1.4826).unwrap();
+        // Collect leverage values when intervals are requested
+        let leverage_values =
+            if confidence_method.is_some() && self.surface_mode == SurfaceMode::Direct {
+                let mut leverages = Vec::with_capacity(n);
+                // Final pass with leverage collection
+                self.smooth_pass(
+                    &ax,
+                    &ay,
+                    window_size,
+                    &workspace.executor_buffer.robustness_weights,
+                    true,
+                    &scales_local,
+                    &mut y_smooth,
+                    n,
+                    &kdtree,
+                    &mut workspace.search_buffer,
+                    &mut workspace.neighborhood,
+                    &mut workspace.fitting_buffer,
+                    Some(&mut leverages),
+                );
+                Some(leverages)
+            } else {
+                None
+            };
 
-            // Approximate leverage based on fraction
-            let approx_leverage = eff_fraction / T::from(n).unwrap();
-            let se_vec: Vec<T> = (0..n).map(|_| sigma * approx_leverage.sqrt()).collect();
-            Some(se_vec)
+        // Standard errors (now using actual leverage if available)
+        let se = if confidence_method.is_some() {
+            if let Some(ref lev) = leverage_values {
+                // Use actual leverage values
+                for i in 0..n {
+                    workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
+                }
+                let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
+                let median_idx = n / 2;
+                floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {
+                    a.partial_cmp(b).unwrap_or(Equal)
+                });
+                let median_residual = sorted_residuals[median_idx];
+                let sigma = median_residual * T::from(1.4826).unwrap();
+
+                // SE = sigma * sqrt(leverage)
+                let se_vec: Vec<T> = lev.iter().map(|&l| sigma * l.sqrt()).collect();
+                Some(se_vec)
+            } else {
+                // Fallback to approximate leverage (for Interpolation mode)
+                for i in 0..n {
+                    workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
+                }
+                let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
+                let median_idx = n / 2;
+                floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {
+                    a.partial_cmp(b).unwrap_or(Equal)
+                });
+                let median_residual = sorted_residuals[median_idx];
+                let sigma = median_residual * T::from(1.4826).unwrap();
+
+                let approx_leverage = eff_fraction / T::from(n).unwrap();
+                let se_vec: Vec<T> = (0..n).map(|_| sigma * approx_leverage.sqrt()).collect();
+                Some(se_vec)
+            }
         } else {
             None
         };
@@ -1024,6 +1073,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             used_fraction: eff_fraction,
             cv_scores: None,
             robustness_weights: final_robustness_weights,
+            leverage: leverage_values,
         }
     }
 
@@ -1125,6 +1175,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         search_buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
         neighborhood: &mut Neighborhood<T>,
         fitting_buffer: &mut FittingBuffer<T>,
+        mut leverage_out: Option<&mut Vec<T>>,
     ) where
         T: Float + Debug + Send + Sync + 'static,
     {
@@ -1133,6 +1184,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             metric: self.distance_metric.clone(),
             scales,
         };
+        let compute_leverage = leverage_out.is_some();
 
         for i in 0..original_n {
             let query_offset = i * dims;
@@ -1160,14 +1212,26 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 weight_function: self.weight_function,
                 zero_weight_fallback: self.zero_weight_fallback,
                 polynomial_degree: self.polynomial_degree,
-                compute_leverage: false,
+                compute_leverage,
                 buffer: Some(fitting_buffer),
             };
 
-            if let Some((val, _)) = context.fit() {
+            if let Some((val, lev)) = context.fit() {
                 y_smooth[i] = val;
+                if let Some(ref mut lev_vec) = leverage_out {
+                    if lev_vec.len() <= i {
+                        lev_vec.resize(i + 1, T::zero());
+                    }
+                    lev_vec[i] = lev;
+                }
             } else {
                 y_smooth[i] = y[i];
+                if let Some(ref mut lev_vec) = leverage_out {
+                    if lev_vec.len() <= i {
+                        lev_vec.resize(i + 1, T::zero());
+                    }
+                    lev_vec[i] = T::zero();
+                }
             }
         }
     }

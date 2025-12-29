@@ -19,10 +19,11 @@ use approx::assert_relative_eq;
 use num_traits::Float;
 
 use loess_rs::internals::algorithms::regression::{
-    LinearSolver, PolynomialDegree, RegressionContext, ZeroWeightFallback,
+    PolynomialDegree, RegressionContext, ZeroWeightFallback,
 };
 use loess_rs::internals::math::distance::DistanceMetric;
 use loess_rs::internals::math::kernel::WeightFunction;
+use loess_rs::internals::math::linalg::FloatLinalg;
 use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood};
 use loess_rs::internals::primitives::buffer::NeighborhoodSearchBuffer;
 use loess_rs::internals::primitives::window::Window;
@@ -46,7 +47,7 @@ fn compute_weighted_sum<T: Float>(values: &[T], weights: &[T], left: usize, righ
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fit_1d_helper<T: Float + std::fmt::Debug + 'static>(
+fn fit_1d_helper<T: FloatLinalg + std::fmt::Debug>(
     x: &[T],
     y: &[T],
     idx: usize,
@@ -102,7 +103,7 @@ fn fit_1d_helper<T: Float + std::fmt::Debug + 'static>(
     ctx.fit().map(|(v, _)| v)
 }
 
-fn local_wls_helper<T: Float + std::fmt::Debug + 'static>(
+fn local_wls_helper<T: FloatLinalg + std::fmt::Debug>(
     x: &[T],
     y: &[T],
     weights: &[T],
@@ -753,18 +754,6 @@ fn test_polynomial_terms_quartic_2d() {
     assert_eq!(terms[12], 4.0);
     assert_eq!(terms[13], 2.0);
     assert_eq!(terms[14], 1.0);
-}
-
-#[test]
-fn test_cholesky_simple() {
-    // A = [4, 2; 2, 5] should decompose to L = [2, 0; 1, 2]
-    let a: [f64; 4] = [4.0, 2.0, 2.0, 5.0];
-    let l = LinearSolver::cholesky_decompose(&a, 2).unwrap();
-
-    assert!(approx_eq(l[0], 2.0, 1e-10)); // L[0,0]
-    assert!(approx_eq(l[1], 0.0, 1e-10)); // L[0,1] (should be 0)
-    assert!(approx_eq(l[2], 1.0, 1e-10)); // L[1,0]
-    assert!(approx_eq(l[3], 2.0, 1e-10)); // L[1,1]
 }
 
 // ============================================================================

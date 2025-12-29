@@ -136,9 +136,17 @@ impl<T: Float> IntervalMethod<T> {
     // Robust Scale Estimation
     // ========================================================================
 
-    /// Estimate the residual standard deviation using a robust method.
-    /// sigma_hat = 1.4826 * MAD(residuals).
-    fn calculate_residual_sd(residuals: &[T]) -> T {
+    /// Estimate the residual standard deviation using a robust method or delta1.
+    /// - If delta1 is provided: sigma = sqrt(RSS / delta1)
+    /// - Fallback: sigma_hat = 1.4826 * MAD(residuals).
+    fn calculate_residual_sd(residuals: &[T], delta1: Option<T>) -> T {
+        if let Some(d1) = delta1 {
+            if d1 > T::zero() {
+                let rss = residuals.iter().fold(T::zero(), |acc, &r| acc + r * r);
+                return (rss / d1).sqrt();
+            }
+        }
+
         let n = residuals.len();
         let scale_const = T::from(Self::MAD_TO_STD_FACTOR).unwrap();
 
@@ -263,6 +271,8 @@ impl<T: Float> IntervalMethod<T> {
         y_smooth: &[T],
         std_errors: &[T],
         residuals: &[T],
+        delta1: Option<T>,
+        delta2: Option<T>,
     ) -> Result<
         (
             Option<Vec<T>>, // confidence lower
@@ -272,10 +282,21 @@ impl<T: Float> IntervalMethod<T> {
         ),
         LoessError,
     > {
+        // Effective degrees of freedom: df = delta1^2 / delta2
+        let df = if let (Some(d1), Some(d2)) = (delta1, delta2) {
+            if d2 > T::zero() {
+                Some(d1 * d1 / d2)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Compute confidence intervals if requested
         let (mut conf_lower, mut conf_upper) = if self.confidence {
             let (lower, upper) = self
-                .compute_confidence_intervals_impl(y_smooth, std_errors)
+                .compute_confidence_intervals_impl(y_smooth, std_errors, df)
                 .map_err(|_| LoessError::InvalidIntervals(self.level.to_f64().unwrap_or(0.0)))?;
             (Some(lower), Some(upper))
         } else {
@@ -284,9 +305,9 @@ impl<T: Float> IntervalMethod<T> {
 
         // Compute prediction intervals if requested
         let (mut pred_lower, mut pred_upper) = if self.prediction {
-            let residual_sd = Self::calculate_residual_sd(residuals);
+            let residual_sd = Self::calculate_residual_sd(residuals, delta1);
             let (lower, upper) = self
-                .compute_prediction_intervals_impl(y_smooth, std_errors, residual_sd)
+                .compute_prediction_intervals_impl(y_smooth, std_errors, residual_sd, df)
                 .map_err(|_| LoessError::InvalidIntervals(self.level.to_f64().unwrap_or(0.0)))?;
             (Some(lower), Some(upper))
         } else {
@@ -294,7 +315,7 @@ impl<T: Float> IntervalMethod<T> {
         };
 
         // Guard against degenerate intervals
-        let residual_sd = Self::calculate_residual_sd(residuals);
+        let residual_sd = Self::calculate_residual_sd(residuals, delta1);
         let any_std_nonzero = std_errors.iter().any(|&s| s > T::zero());
 
         if residual_sd > T::zero() || any_std_nonzero {
@@ -324,14 +345,17 @@ impl<T: Float> IntervalMethod<T> {
         Ok((conf_lower, conf_upper, pred_lower, pred_upper))
     }
 
-    /// Implementation of confidence interval calculation.
-    /// CI = y_hat +/- z * SE
     fn compute_confidence_intervals_impl(
         &self,
         y_smooth: &[T],
         std_errors: &[T],
+        df: Option<T>,
     ) -> Result<(Vec<T>, Vec<T>), &'static str> {
-        let z = Self::approximate_z_score(self.level)?;
+        let z = if let Some(df_val) = df {
+            Self::approximate_t_score(self.level, df_val)?
+        } else {
+            Self::approximate_z_score(self.level)?
+        };
 
         let lower: Vec<T> = y_smooth
             .iter()
@@ -348,15 +372,18 @@ impl<T: Float> IntervalMethod<T> {
         Ok((lower, upper))
     }
 
-    /// Implementation of prediction interval calculation.
-    /// PI = y_hat +/- z * sqrt(SE^2 + sigma^2)
     fn compute_prediction_intervals_impl(
         &self,
         y_smooth: &[T],
         std_errors: &[T],
         residual_sd: T,
+        df: Option<T>,
     ) -> Result<(Vec<T>, Vec<T>), &'static str> {
-        let z = Self::approximate_z_score(self.level)?;
+        let z = if let Some(df_val) = df {
+            Self::approximate_t_score(self.level, df_val)?
+        } else {
+            Self::approximate_z_score(self.level)?
+        };
         let rsd_sq = residual_sd * residual_sd;
 
         let lower: Vec<T> = y_smooth
@@ -378,6 +405,29 @@ impl<T: Float> IntervalMethod<T> {
             .collect();
 
         Ok((lower, upper))
+    }
+
+    /// Approximate the critical value (T-score) for a given confidence level and DOF.
+    /// For very large DOF, fallback to Z-score.
+    pub fn approximate_t_score(confidence_level: T, df: T) -> Result<T, &'static str> {
+        let df_f = df.to_f64().unwrap_or(2.0);
+
+        // Approximation for T-distribution: Z * sqrt(df / (df - 2))
+        // This is only valid for df > 2 and is an approximation for the variance.
+        // A better approach for small df would be appreciated, but for LOESS,
+        // df is usually reasonable.
+
+        let z = Self::approximate_z_score(confidence_level)?;
+        let z_f = z.to_f64().unwrap_or(1.96);
+
+        let t_f = if df_f > 2.0 {
+            z_f * (df_f / (df_f - 2.0)).sqrt()
+        } else {
+            // Very small DOF fallback: increase Z significantly or use a fixed high value
+            z_f * 1.5
+        };
+
+        Ok(T::from(t_f).unwrap_or(z))
     }
 
     // ========================================================================

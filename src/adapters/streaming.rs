@@ -45,7 +45,6 @@ use std::vec::Vec;
 // External dependencies
 use core::fmt::Debug;
 use core::mem;
-use num_traits::Float;
 
 // Internal dependencies
 use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
@@ -58,6 +57,7 @@ use crate::evaluation::diagnostics::DiagnosticsState;
 use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
+use crate::math::linalg::FloatLinalg;
 use crate::primitives::backend::Backend;
 use crate::primitives::errors::LoessError;
 
@@ -85,7 +85,7 @@ pub enum MergeStrategy {
 
 /// Builder for streaming LOESS processor.
 #[derive(Debug, Clone)]
-pub struct StreamingLoessBuilder<T: Float> {
+pub struct StreamingLoessBuilder<T: FloatLinalg> {
     /// Chunk size for processing
     pub chunk_size: usize,
 
@@ -178,13 +178,13 @@ pub struct StreamingLoessBuilder<T: Float> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: Float> Default for StreamingLoessBuilder<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> Default for StreamingLoessBuilder<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Float> StreamingLoessBuilder<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> StreamingLoessBuilder<T> {
     /// Create a new streaming LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -407,7 +407,7 @@ impl<T: Float> StreamingLoessBuilder<T> {
 // ============================================================================
 
 /// Streaming LOESS processor for large datasets.
-pub struct StreamingLoess<T: Float> {
+pub struct StreamingLoess<T: FloatLinalg + Debug + Send + Sync> {
     config: StreamingLoessBuilder<T>,
     overlap_buffer_x: Vec<T>,
     overlap_buffer_y: Vec<T>,
@@ -416,7 +416,7 @@ pub struct StreamingLoess<T: Float> {
     diagnostics_state: Option<DiagnosticsState<T>>,
 }
 
-impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
+impl<T: FloatLinalg + Debug + Send + Sync> StreamingLoess<T> {
     /// Process a chunk of data.
     pub fn process_chunk(&mut self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
         // Validate inputs using standard validator
@@ -619,6 +619,12 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
             iterations_used: result.iterations,
             fraction_used: self.config.fraction,
             cv_scores: None,
+            enp: None,
+            trace_hat: None,
+            delta1: None,
+            delta2: None,
+            residual_scale: None,
+            leverage: None,
         })
     }
 
@@ -642,6 +648,12 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
                 iterations_used: None,
                 fraction_used: self.config.fraction,
                 cv_scores: None,
+                enp: None,
+                trace_hat: None,
+                delta1: None,
+                delta2: None,
+                residual_scale: None,
+                leverage: None,
             });
         }
 
@@ -687,6 +699,12 @@ impl<T: Float + Debug + Send + Sync + 'static> StreamingLoess<T> {
             iterations_used: None,
             fraction_used: self.config.fraction,
             cv_scores: None,
+            enp: None,
+            trace_hat: None,
+            delta1: None,
+            delta2: None,
+            residual_scale: None,
+            leverage: None,
         };
 
         // Clear buffers

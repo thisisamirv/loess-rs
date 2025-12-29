@@ -31,13 +31,17 @@ include = [
 
 [dependencies]
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
+nalgebra = { version = "0.34", default-features = false, features = [
+    "alloc",
+    "libm",
+] }
 
 [dev-dependencies]
 approx = "0.5"
 
 [features]
 default = ["std"]
-std = ["num-traits/std"]
+std = ["num-traits/std", "nalgebra/std"]
 dev = []
 
 [profile.release]

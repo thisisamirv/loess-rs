@@ -201,14 +201,18 @@ pub trait NeighborhoodStorage {
 pub struct NeighborhoodSearchBuffer<N> {
     pub(crate) heap: BinaryHeap<N>,
     pub(crate) sort_vec: Vec<N>,
+    pub(crate) stack: Vec<usize>,
 }
 
 impl<N: Ord> NeighborhoodSearchBuffer<N> {
     /// Create a new search buffer with capacity k.
     pub fn new(k: usize) -> Self {
+        // Stack depth is bounded by tree height, typically O(log n).
+        // Pre-allocate for ~1M points (log2(1M) ≈ 20).
         Self {
             heap: BinaryHeap::with_capacity(k),
             sort_vec: Vec::with_capacity(k),
+            stack: Vec::with_capacity(32),
         }
     }
 
@@ -216,6 +220,7 @@ impl<N: Ord> NeighborhoodSearchBuffer<N> {
     pub fn clear(&mut self) {
         self.heap.clear();
         self.sort_vec.clear();
+        self.stack.clear();
     }
 }
 
