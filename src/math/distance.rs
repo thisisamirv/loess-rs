@@ -32,6 +32,7 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 // External dependencies
+use core::cmp::Ordering;
 use num_traits::Float;
 
 // ============================================================================
@@ -150,50 +151,66 @@ impl<T: Float> DistanceMetric<T> {
         sum_sq.sqrt()
     }
 
-    /// Compute min and max for each dimension across a set of nD points.
-    pub fn compute_ranges(points: &[T], dimensions: usize) -> (Vec<T>, Vec<T>) {
-        let n_points = points.len() / dimensions;
-        debug_assert_eq!(
-            points.len() % dimensions,
-            0,
-            "Points array length must be divisible by dimensions"
-        );
-
-        if n_points == 0 {
-            return (vec![T::zero(); dimensions], vec![T::one(); dimensions]);
+    /// Compute robust normalization scales using 10% trimmed standard deviation.
+    pub fn compute_robust_scales(points: &[T], dimensions: usize) -> Vec<T> {
+        let n = points.len() / dimensions;
+        if n < 10 {
+            // Fallback for very small datasets: use simple range or 1.0
+            return vec![T::one(); dimensions];
         }
 
-        let mut mins = vec![T::infinity(); dimensions];
-        let mut maxs = vec![T::neg_infinity(); dimensions];
+        let cut = (T::from(0.1).unwrap() * T::from(n).unwrap())
+            .ceil()
+            .to_usize()
+            .unwrap();
+        // Ensure we don't trim everything
+        let effective_n = n.saturating_sub(2 * cut);
+        if effective_n < 2 {
+            return vec![T::one(); dimensions];
+        }
 
-        for i in 0..n_points {
-            let offset = i * dimensions;
-            for d in 0..dimensions {
-                let val = points[offset + d];
-                if val < mins[d] {
-                    mins[d] = val;
-                }
-                if val > maxs[d] {
-                    maxs[d] = val;
-                }
+        let mut scales = Vec::with_capacity(dimensions);
+        let mut temp = Vec::with_capacity(n);
+
+        for d in 0..dimensions {
+            // Extract dimension d
+            temp.clear();
+            for i in 0..n {
+                temp.push(points[i * dimensions + d]);
+            }
+
+            // Sort
+            temp.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+
+            // Compute trimmed mean
+            let sum: T = temp
+                .iter()
+                .skip(cut)
+                .take(effective_n)
+                .fold(T::zero(), |acc, &val| acc + val);
+            let mean = sum / T::from(effective_n).unwrap();
+
+            // Compute trimmed sum of squares
+            let sum_sq: T = temp
+                .iter()
+                .skip(cut)
+                .take(effective_n)
+                .map(|&val| {
+                    let diff = val - mean;
+                    diff * diff
+                })
+                .fold(T::zero(), |acc, val| acc + val);
+
+            // Compute standard deviation (divisor = N_eff - 1)
+            let variance = sum_sq / T::from(effective_n - 1).unwrap();
+            let std_dev = variance.sqrt();
+
+            if std_dev > T::epsilon() {
+                scales.push(T::one() / std_dev);
+            } else {
+                scales.push(T::zero()); // Ignore constant dimension
             }
         }
-
-        (mins, maxs)
-    }
-
-    /// Compute normalization scales from ranges.
-    pub fn compute_normalization_scales(mins: &[T], maxs: &[T]) -> Vec<T> {
-        mins.iter()
-            .zip(maxs.iter())
-            .map(|(&min, &max)| {
-                let range = max - min;
-                if range > T::epsilon() {
-                    T::one() / range
-                } else {
-                    T::zero() // Constant dimension - will be ignored in distance
-                }
-            })
-            .collect()
+        scales
     }
 }

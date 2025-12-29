@@ -37,31 +37,37 @@ fn test_euclidean_distance_3d() {
 // ============================================================================
 
 #[test]
-fn test_compute_ranges() {
+fn test_robust_scales_simple() {
     // 3 points, 2D
-    let points = [
-        1.0, 10.0, // p1
-        2.0, 5.0, // p2
-        5.0, 20.0, // p3
-    ];
+    // n < 10, so fallback to 1.0
+    let points = [1.0, 10.0, 2.0, 5.0, 5.0, 20.0];
     let dims = 2;
 
-    let (mins, maxs) = DistanceMetric::compute_ranges(&points, dims);
-
-    assert_eq!(mins, vec![1.0, 5.0]);
-    assert_eq!(maxs, vec![5.0, 20.0]);
+    let scales = DistanceMetric::compute_robust_scales(&points, dims);
+    assert_eq!(scales, vec![1.0, 1.0]);
 }
 
 #[test]
-fn test_normalization_scales() {
-    let mins = [0.0, 10.0];
-    let maxs = [10.0, 20.0];
-    // range 1: 10, scale 1/10 = 0.1
-    // range 2: 10, scale 1/10 = 0.1
+fn test_robust_scales_outliers() {
+    // 20 points, 1D
+    // 18 points in [0, 1], 2 outliers at 1000.0
+    // 10% trim = ceil(0.1 * 20) = 2 points.
+    // robust logic should trim the top 2 (outliers) and bottom 2.
+    // remaining 16 points are in [0, 1].
+    // std dev should be small (~0.3), scale should be large (~3.0).
+    // if it used min-max (0 to 1000), scale would be 0.001.
 
-    let scales = DistanceMetric::compute_normalization_scales(&mins, &maxs);
-    assert_relative_eq!(scales[0], 0.1);
-    assert_relative_eq!(scales[1], 0.1);
+    let mut points = Vec::new();
+    for i in 0..18 {
+        points.push(i as f64 / 18.0);
+    }
+    points.push(1000.0);
+    points.push(1000.0);
+
+    let dims = 1;
+    let scales = DistanceMetric::compute_robust_scales(&points, dims);
+
+    assert!(scales[0] > 1.0); // Should be much larger than 0.001
 }
 
 #[test]

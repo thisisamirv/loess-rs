@@ -45,22 +45,13 @@ use crate::math::mad::compute_mad;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum RobustnessMethod {
     /// Bisquare (Tukey's biweight) - default and most common.
-    ///
-    /// Uses tuning constant c=6.0 following Cleveland (1979).
-    /// Provides smooth downweighting with complete rejection beyond threshold.
     #[default]
     Bisquare,
 
     /// Huber weights - less aggressive downweighting.
-    ///
-    /// Uses tuning constant c=1.345 for 95% efficiency at the normal distribution.
-    /// Never completely rejects points, only downweights them.
     Huber,
 
     /// Talwar (hard threshold) - most aggressive.
-    ///
-    /// Uses tuning constant c=2.5.
-    /// Completely rejects points beyond threshold (weight = 0).
     Talwar,
 }
 
@@ -177,7 +168,7 @@ impl RobustnessMethod {
     ///
     /// w(u) = 0            if u >= 0.999
     #[inline]
-    fn bisquare_weight<T: Float>(residual: T, scale: T, c: T) -> T {
+    pub(crate) fn bisquare_weight<T: Float>(residual: T, scale: T, c: T) -> T {
         if scale <= T::zero() {
             return T::one();
         }
@@ -188,7 +179,7 @@ impl RobustnessMethod {
 
         let u = (residual / tuned_scale).abs();
 
-        // Thresholds matching scikit-misc (0.001 and 0.999)
+        // Thresholds (0.001 and 0.999)
         let low_threshold = T::from(0.001).unwrap();
         let high_threshold = T::from(0.999).unwrap();
 
@@ -212,7 +203,7 @@ impl RobustnessMethod {
     ///
     /// w(u) = c / u  if u > c
     #[inline]
-    fn huber_weight<T: Float>(residual: T, scale: T, c: T) -> T {
+    pub(crate) fn huber_weight<T: Float>(residual: T, scale: T, c: T) -> T {
         if scale <= T::zero() {
             return T::one();
         }
@@ -231,7 +222,7 @@ impl RobustnessMethod {
     ///
     /// w(u) = 0  if u > c
     #[inline]
-    fn talwar_weight<T: Float>(residual: T, scale: T, c: T) -> T {
+    pub(crate) fn talwar_weight<T: Float>(residual: T, scale: T, c: T) -> T {
         if scale <= T::zero() {
             return T::one();
         }

@@ -583,8 +583,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                     Some(|train_x: &[T], train_y: &[T], test_x: &[T], f: T| {
                         let n_train = train_y.len();
                         let window_size = Window::calculate_span(n_train, f);
-                        let (mins, maxs) = DistanceMetric::compute_ranges(train_x, dims);
-                        let scales = DistanceMetric::compute_normalization_scales(&mins, &maxs);
+                        let scales = DistanceMetric::compute_robust_scales(train_x, dims);
                         let kdtree = KDTree::new(train_x, dims);
 
                         executor.predict(
@@ -798,12 +797,16 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             // Use a temp buffer to avoid overwriting weights used by augmented points before sync
             let mut new_weights = vec![T::zero(); n];
             for i in 0..n {
-                let r = residuals[i] / (T::from(6.0).unwrap() * mad);
-                new_weights[i] = if r < T::one() {
-                    let tmp = T::one() - r * r;
-                    tmp * tmp
-                } else {
-                    T::zero()
+                new_weights[i] = match self.robustness_method {
+                    RobustnessMethod::Bisquare => {
+                        RobustnessMethod::bisquare_weight(residuals[i], mad, T::from(6.0).unwrap())
+                    }
+                    RobustnessMethod::Huber => {
+                        RobustnessMethod::huber_weight(residuals[i], mad, T::from(1.345).unwrap())
+                    }
+                    RobustnessMethod::Talwar => {
+                        RobustnessMethod::talwar_weight(residuals[i], mad, T::from(2.5).unwrap())
+                    }
                 };
             }
 
