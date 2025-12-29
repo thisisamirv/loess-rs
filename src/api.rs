@@ -38,6 +38,7 @@ use core::fmt::Debug;
 use crate::adapters::batch::BatchLoessBuilder;
 use crate::adapters::online::OnlineLoessBuilder;
 use crate::adapters::streaming::StreamingLoessBuilder;
+use crate::algorithms::regression::SolverLinalg;
 use crate::engine::executor::{CVPassFn, IntervalPassFn, SmoothPassFn};
 use crate::evaluation::cv::{CVConfig, CVKind};
 use crate::evaluation::intervals::IntervalMethod;
@@ -66,7 +67,7 @@ pub mod Adapter {
 
 /// Fluent builder for configuring LOESS parameters and execution modes.
 #[derive(Debug, Clone)]
-pub struct LoessBuilder<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> {
+pub struct LoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> {
     /// Smoothing fraction (0..1].
     pub fraction: Option<T>,
 
@@ -173,13 +174,17 @@ pub struct LoessBuilder<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> {
     pub duplicate_param: Option<&'static str>,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for LoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> Default
+    for LoessBuilder<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> LoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLinalg>
+    LoessBuilder<T>
+{
     /// Select an execution adapter to transition to an execution builder.
     pub fn adapter<A>(self, _adapter: A) -> A::Output
     where
@@ -513,7 +518,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> LoessBuilder<T> {
 }
 
 /// Trait for transitioning from a generic builder to an execution builder.
-pub trait LoessAdapter<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> {
+pub trait LoessAdapter<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> {
     /// The output execution builder.
     type Output;
 
@@ -525,7 +530,9 @@ pub trait LoessAdapter<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> {
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> LoessAdapter<T> for Batch {
+impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> LoessAdapter<T>
+    for Batch
+{
     type Output = BatchLoessBuilder<T>;
 
     fn convert(builder: LoessBuilder<T>) -> Self::Output {
@@ -620,7 +627,9 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> LoessAdapter<T> for 
 #[derive(Debug, Clone, Copy)]
 pub struct Streaming;
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> LoessAdapter<T> for Streaming {
+impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> LoessAdapter<T>
+    for Streaming
+{
     type Output = StreamingLoessBuilder<T>;
 
     fn convert(builder: LoessBuilder<T>) -> Self::Output {
@@ -715,7 +724,9 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> LoessAdapter<T> for 
 #[derive(Debug, Clone, Copy)]
 pub struct Online;
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> LoessAdapter<T> for Online {
+impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> LoessAdapter<T>
+    for Online
+{
     type Output = OnlineLoessBuilder<T>;
 
     fn convert(builder: LoessBuilder<T>) -> Self::Output {

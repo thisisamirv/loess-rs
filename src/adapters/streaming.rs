@@ -47,7 +47,7 @@ use core::fmt::Debug;
 use core::mem;
 
 // Internal dependencies
-use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
+use crate::algorithms::regression::{PolynomialDegree, SolverLinalg, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn, SurfaceMode};
 use crate::engine::executor::{LoessConfig, LoessExecutor};
@@ -85,7 +85,7 @@ pub enum MergeStrategy {
 
 /// Builder for streaming LOESS processor.
 #[derive(Debug, Clone)]
-pub struct StreamingLoessBuilder<T: FloatLinalg + DistanceLinalg> {
+pub struct StreamingLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Chunk size for processing
     pub chunk_size: usize,
 
@@ -178,13 +178,17 @@ pub struct StreamingLoessBuilder<T: FloatLinalg + DistanceLinalg> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for StreamingLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Default
+    for StreamingLoessBuilder<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> StreamingLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
+    StreamingLoessBuilder<T>
+{
     /// Create a new streaming LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -407,7 +411,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> StreamingLoessBuilde
 // ============================================================================
 
 /// Streaming LOESS processor for large datasets.
-pub struct StreamingLoess<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> {
+pub struct StreamingLoess<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> {
     config: StreamingLoessBuilder<T>,
     overlap_buffer_x: Vec<T>,
     overlap_buffer_y: Vec<T>,
@@ -416,7 +420,9 @@ pub struct StreamingLoess<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync>
     diagnostics_state: Option<DiagnosticsState<T>>,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> StreamingLoess<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLinalg>
+    StreamingLoess<T>
+{
     /// Process a chunk of data.
     pub fn process_chunk(&mut self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
         // Validate inputs using standard validator

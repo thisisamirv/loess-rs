@@ -44,7 +44,7 @@ use std::{collections::VecDeque, vec::Vec};
 use core::fmt::Debug;
 
 // Internal dependencies
-use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
+use crate::algorithms::regression::{PolynomialDegree, SolverLinalg, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn, SurfaceMode};
 use crate::engine::executor::{LoessConfig, LoessExecutor};
@@ -73,7 +73,7 @@ pub enum UpdateMode {
 
 /// Builder for online LOESS processor.
 #[derive(Debug, Clone)]
-pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg> {
+pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Window capacity (maximum number of points to retain)
     pub window_capacity: usize,
 
@@ -163,13 +163,15 @@ pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for OnlineLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Default
+    for OnlineLoessBuilder<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> OnlineLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> OnlineLoessBuilder<T> {
     /// Create a new online LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -398,7 +400,7 @@ pub struct OnlineOutput<T> {
 // ============================================================================
 
 /// Online LOESS processor for streaming data.
-pub struct OnlineLoess<T: FloatLinalg + DistanceLinalg> {
+pub struct OnlineLoess<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     config: OnlineLoessBuilder<T>,
     window_x: VecDeque<T>,
     window_y: VecDeque<T>,
@@ -408,7 +410,9 @@ pub struct OnlineLoess<T: FloatLinalg + DistanceLinalg> {
     scratch_y: Vec<T>,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> OnlineLoess<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLinalg>
+    OnlineLoess<T>
+{
     /// Add a new point and get its smoothed value.
     pub fn add_point(&mut self, x: &[T], y: T) -> Result<Option<OnlineOutput<T>>, LoessError> {
         // Validate new point

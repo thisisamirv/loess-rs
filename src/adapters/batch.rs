@@ -42,7 +42,7 @@ use std::vec::Vec;
 use core::fmt::Debug;
 
 // Internal dependencies
-use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
+use crate::algorithms::regression::{PolynomialDegree, SolverLinalg, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::engine::executor::{
     CVPassFn, FitPassFn, IntervalPassFn, LoessConfig, LoessExecutor, SmoothPassFn, SurfaceMode,
@@ -66,7 +66,7 @@ use crate::primitives::errors::LoessError;
 
 /// Builder for batch LOESS processor.
 #[derive(Debug, Clone)]
-pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg> {
+pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Smoothing fraction (span)
     pub fraction: T,
 
@@ -162,13 +162,15 @@ pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg> {
     pub(crate) duplicate_param: Option<&'static str>,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for BatchLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Default
+    for BatchLoessBuilder<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> BatchLoessBuilder<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> BatchLoessBuilder<T> {
     /// Create a new batch LOESS builder with default parameters.
     fn new() -> Self {
         Self {
@@ -392,11 +394,11 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> BatchLoessBuilder<T>
 // ============================================================================
 
 /// Batch LOESS processor.
-pub struct BatchLoess<T: FloatLinalg + DistanceLinalg> {
+pub struct BatchLoess<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     config: BatchLoessBuilder<T>,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> BatchLoess<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLinalg> BatchLoess<T> {
     /// Perform LOESS smoothing on the provided data.
     pub fn fit(self, x: &[T], y: &[T]) -> Result<LoessResult<T>, LoessError> {
         Validator::validate_inputs(x, y, self.config.dimensions)?;

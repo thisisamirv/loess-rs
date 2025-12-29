@@ -19,7 +19,7 @@ use approx::assert_relative_eq;
 use num_traits::Float;
 
 use loess_rs::internals::algorithms::regression::{
-    PolynomialDegree, RegressionContext, ZeroWeightFallback,
+    PolynomialDegree, RegressionContext, SolverLinalg, ZeroWeightFallback,
 };
 use loess_rs::internals::math::distance::DistanceMetric;
 use loess_rs::internals::math::kernel::WeightFunction;
@@ -47,7 +47,7 @@ fn compute_weighted_sum<T: Float>(values: &[T], weights: &[T], left: usize, righ
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fit_1d_helper<T: FloatLinalg + std::fmt::Debug>(
+fn fit_1d_helper<T: FloatLinalg + std::fmt::Debug + SolverLinalg>(
     x: &[T],
     y: &[T],
     idx: usize,
@@ -84,26 +84,26 @@ fn fit_1d_helper<T: FloatLinalg + std::fmt::Debug>(
         max_distance: max_dist,
     };
 
-    let mut ctx = RegressionContext {
+    let mut ctx = RegressionContext::new(
         x,
-        dimensions: 1,
+        1,
         y,
-        query_idx: idx,
-        query_point: None,
-        neighborhood: &neighborhood,
+        idx,
+        None,
+        &neighborhood,
         use_robustness,
         robustness_weights,
         weight_function,
         zero_weight_fallback,
         polynomial_degree,
-        compute_leverage: false,
-        buffer: None,
-    };
+        false,
+        None,
+    );
 
     ctx.fit().map(|(v, _)| v)
 }
 
-fn local_wls_helper<T: FloatLinalg + std::fmt::Debug>(
+fn local_wls_helper<T: FloatLinalg + std::fmt::Debug + SolverLinalg>(
     x: &[T],
     y: &[T],
     weights: &[T],
@@ -148,21 +148,22 @@ fn local_wls_helper<T: FloatLinalg + std::fmt::Debug>(
     // Wait, typical usages pass `weights` as a slice matching x?
     // See `test_local_wls_degenerate_bandwidth`: weights len = x len.
 
-    let mut ctx = RegressionContext {
+    let query_point_arr = [x_current];
+    let mut ctx = RegressionContext::new(
         x,
-        dimensions: 1,
+        1,
         y,
-        query_idx: 0, // Dummy
-        query_point: Some(&[x_current]),
-        neighborhood: &neighborhood,
-        use_robustness: true,
-        robustness_weights: weights,
-        weight_function: WeightFunction::Uniform,
-        zero_weight_fallback: ZeroWeightFallback::UseLocalMean,
-        polynomial_degree: PolynomialDegree::Linear,
-        compute_leverage: false,
-        buffer: None,
-    };
+        0,
+        Some(&query_point_arr),
+        &neighborhood,
+        true,
+        weights,
+        WeightFunction::Uniform,
+        ZeroWeightFallback::UseLocalMean,
+        PolynomialDegree::Linear,
+        false,
+        None,
+    );
 
     ctx.fit().map(|(v, _)| v).unwrap_or(T::zero()) // Or handle None?
 }
@@ -600,21 +601,21 @@ fn test_weighted_mean_nd() {
     let mut neighborhood = Neighborhood::with_capacity(3);
     tree.find_k_nearest(&query, 3, &dist_calc, None, &mut buffer, &mut neighborhood);
 
-    let mut context = RegressionContext {
-        x: &x,
-        dimensions: 2,
-        y: &y,
-        query_idx: 0,
-        query_point: None,
-        neighborhood: &neighborhood,
-        use_robustness: false,
-        robustness_weights: &[1.0, 1.0, 1.0],
-        weight_function: WeightFunction::Tricube,
-        zero_weight_fallback: ZeroWeightFallback::default(),
-        polynomial_degree: PolynomialDegree::Constant,
-        compute_leverage: false,
-        buffer: None,
-    };
+    let mut context = RegressionContext::new(
+        &x,
+        2,
+        &y,
+        0,
+        None,
+        &neighborhood,
+        false,
+        &[1.0, 1.0, 1.0],
+        WeightFunction::Tricube,
+        ZeroWeightFallback::default(),
+        PolynomialDegree::Constant,
+        false,
+        None,
+    );
 
     let (result, _leverage) = context.fit().unwrap();
     // Should be close to weighted mean
@@ -648,21 +649,21 @@ fn test_linear_fit_nd_2d() {
     // Create a robustness weights array matching size of x
     let robustness_weights = [1.0; 4];
 
-    let mut context = RegressionContext {
-        x: &x,
-        dimensions: 2,
-        y: &y,
-        query_idx: 0,
-        query_point: Some(&query),
-        neighborhood: &neighborhood,
-        use_robustness: false,
-        robustness_weights: &robustness_weights,
-        weight_function: WeightFunction::Uniform, // Uniform for exact fit
-        zero_weight_fallback: ZeroWeightFallback::default(),
-        polynomial_degree: PolynomialDegree::Linear,
-        compute_leverage: false,
-        buffer: None,
-    };
+    let mut context = RegressionContext::new(
+        &x,
+        2,
+        &y,
+        0,
+        Some(&query),
+        &neighborhood,
+        false,
+        &robustness_weights,
+        WeightFunction::Uniform, // Uniform for exact fit
+        ZeroWeightFallback::default(),
+        PolynomialDegree::Linear,
+        false,
+        None,
+    );
 
     let (result, _leverage) = context.fit().unwrap();
     // With uniform weights and exact linear data, should be close to 2.5

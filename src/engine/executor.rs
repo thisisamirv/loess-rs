@@ -53,7 +53,9 @@ use num_traits::Float;
 
 // Internal dependencies
 use crate::algorithms::interpolation::InterpolationSurface;
-use crate::algorithms::regression::{PolynomialDegree, RegressionContext, ZeroWeightFallback};
+use crate::algorithms::regression::{
+    PolynomialDegree, RegressionContext, SolverLinalg, ZeroWeightFallback,
+};
 use crate::algorithms::robustness::RobustnessMethod;
 use crate::evaluation::cv::CVKind;
 use crate::evaluation::intervals::IntervalMethod;
@@ -71,14 +73,16 @@ use crate::primitives::window::Window;
 /// Standard LOESS distance calculator.
 ///
 /// Implements `PointDistance` using either Euclidean or Normalized Euclidean metrics.
-pub struct LoessDistanceCalculator<'a, T: FloatLinalg + DistanceLinalg> {
+pub struct LoessDistanceCalculator<'a, T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// The distance metric to use (Euclidean or Normalized).
     pub metric: DistanceMetric<T>,
     /// Normalization scales for each dimension (used if metric is Normalized).
     pub scales: &'a [T],
 }
 
-impl<'a, T: FloatLinalg + DistanceLinalg> PointDistance<T> for LoessDistanceCalculator<'a, T> {
+impl<'a, T: FloatLinalg + DistanceLinalg + SolverLinalg> PointDistance<T>
+    for LoessDistanceCalculator<'a, T>
+{
     fn distance(&self, a: &[T], b: &[T]) -> T {
         match &self.metric {
             DistanceMetric::Normalized => DistanceMetric::normalized(a, b, self.scales),
@@ -206,7 +210,7 @@ pub struct ExecutorOutput<T: FloatLinalg> {
 
 /// Configuration for LOESS execution.
 #[derive(Debug, Clone)]
-pub struct LoessConfig<T: FloatLinalg> {
+pub struct LoessConfig<T: FloatLinalg + SolverLinalg> {
     /// Smoothing fraction (0, 1].
     /// If `None` and `cv_fractions` are provided, bandwidth selection is performed.
     pub fraction: Option<T>,
@@ -288,7 +292,9 @@ pub struct LoessConfig<T: FloatLinalg> {
     pub parallel: bool,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for LoessConfig<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Default
+    for LoessConfig<T>
+{
     fn default() -> Self {
         Self {
             fraction: None,
@@ -320,7 +326,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync> Default for LoessCon
 
 /// Unified executor for LOESS smoothing operations.
 #[derive(Debug, Clone)]
-pub struct LoessExecutor<T: FloatLinalg> {
+pub struct LoessExecutor<T: FloatLinalg + SolverLinalg> {
     /// Smoothing fraction (0, 1].
     pub fraction: T,
 
@@ -385,13 +391,17 @@ pub struct LoessExecutor<T: FloatLinalg> {
     pub parallel: bool,
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> Default for LoessExecutor<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLinalg> Default
+    for LoessExecutor<T>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecutor<T> {
+impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLinalg>
+    LoessExecutor<T>
+{
     // ========================================================================
     // Constructor and Builder Methods
     // ========================================================================
@@ -777,21 +787,21 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
         if self.surface_mode == SurfaceMode::Interpolation {
             let fitter =
                 |vertex: &[T], neighborhood: &Neighborhood<T>, fb: &mut FittingBuffer<T>| {
-                    let mut context = RegressionContext {
-                        x: &ax,
-                        dimensions: dims,
-                        y: &ay,
-                        query_idx: 0,
-                        query_point: Some(vertex),
+                    let mut context = RegressionContext::new(
+                        &ax,
+                        dims,
+                        &ay,
+                        0, // query_idx is not used when query_point is Some
+                        Some(vertex),
                         neighborhood,
-                        use_robustness: false,
-                        robustness_weights: &workspace.executor_buffer.robustness_weights,
-                        weight_function: self.weight_function,
-                        zero_weight_fallback: self.zero_weight_fallback,
-                        polynomial_degree: self.polynomial_degree,
-                        compute_leverage: false,
-                        buffer: Some(fb),
-                    };
+                        false, // use_robustness
+                        &workspace.executor_buffer.robustness_weights,
+                        self.weight_function,
+                        self.zero_weight_fallback,
+                        self.polynomial_degree,
+                        false, // compute_leverage
+                        Some(fb),
+                    );
                     context.fit_with_coefficients()
                 };
 
@@ -819,13 +829,17 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
             let surface = _surface_opt.as_ref().unwrap();
             for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
                 let query_offset = i * dims;
-                *val = surface.evaluate(&ax[query_offset..query_offset + dims]);
+                // Use original x (not augmented) for query points
+                let query_point = &x[query_offset..query_offset + dims];
+                *val = surface.evaluate(query_point);
             }
         } else {
             // Direct mode: initial fit
             self.smooth_pass(
                 &ax,
                 &ay,
+                x, // x_query
+                y, // y_query
                 window_size,
                 &workspace.executor_buffer.robustness_weights,
                 false,
@@ -932,23 +946,21 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
                             |vertex: &[T],
                              neighborhood: &Neighborhood<T>,
                              fb: &mut FittingBuffer<T>| {
-                                let mut context = RegressionContext {
-                                    x: &ax,
-                                    dimensions: dims,
-                                    y: &ay,
-                                    query_idx: 0,
-                                    query_point: Some(vertex),
+                                let mut context = RegressionContext::new(
+                                    &ax,
+                                    dims,
+                                    &ay,
+                                    0, // query_idx is not used when query_point is Some
+                                    Some(vertex),
                                     neighborhood,
-                                    use_robustness: true,
-                                    robustness_weights: &workspace
-                                        .executor_buffer
-                                        .robustness_weights,
-                                    weight_function: self.weight_function,
-                                    zero_weight_fallback: self.zero_weight_fallback,
-                                    polynomial_degree: self.polynomial_degree,
-                                    compute_leverage: false,
-                                    buffer: Some(fb),
-                                };
+                                    true, // use_robustness
+                                    &workspace.executor_buffer.robustness_weights,
+                                    self.weight_function,
+                                    self.zero_weight_fallback,
+                                    self.polynomial_degree,
+                                    false, // compute_leverage
+                                    Some(fb),
+                                );
                                 context.fit_with_coefficients()
                             };
 
@@ -975,6 +987,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
                     self.smooth_pass(
                         &ax,
                         &ay,
+                        x, // x_query
+                        y, // y_query
                         window_size,
                         &workspace.executor_buffer.robustness_weights,
                         true,
@@ -999,6 +1013,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
                 self.smooth_pass(
                     &ax,
                     &ay,
+                    x, // x_query
+                    y, // y_query
                     window_size,
                     &workspace.executor_buffer.robustness_weights,
                     true,
@@ -1139,21 +1155,21 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
             let neighborhood = &workspace.neighborhood;
 
             // Fit local polynomial
-            let mut context = RegressionContext {
-                x: x_train,
-                dimensions: dims,
-                y: y_train,
-                query_idx: 0,
-                query_point: Some(query_point),
+            let mut context = RegressionContext::new(
+                x_train,
+                dims,
+                y_train,
+                0, // query_idx is not used when query_point is Some
+                Some(query_point),
                 neighborhood,
-                use_robustness: true,
+                true, // use_robustness
                 robustness_weights,
-                weight_function: self.weight_function,
-                zero_weight_fallback: ZeroWeightFallback::default(), // CV fallback
-                polynomial_degree: self.polynomial_degree,
-                compute_leverage: false,
-                buffer: Some(&mut workspace.fitting_buffer),
-            };
+                self.weight_function,
+                ZeroWeightFallback::UseLocalMean, // CV fallback
+                self.polynomial_degree,
+                false, // compute_leverage
+                Some(&mut workspace.fitting_buffer),
+            );
 
             if let Some((val, _)) = context.fit() {
                 *pred = val;
@@ -1170,8 +1186,10 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
     #[allow(clippy::too_many_arguments)]
     fn smooth_pass(
         &self,
-        x: &[T],
-        y: &[T],
+        x_context: &[T],
+        y_context: &[T],
+        x_query: &[T],
+        y_query: &[T],
         window_size: usize,
         robustness_weights: &[T],
         use_robustness: bool,
@@ -1195,7 +1213,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
 
         for i in 0..original_n {
             let query_offset = i * dims;
-            let query_point = &x[query_offset..query_offset + dims];
+            let query_point = &x_query[query_offset..query_offset + dims];
 
             kdtree.find_k_nearest(
                 query_point,
@@ -1207,21 +1225,21 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
             );
             let neighborhood = &neighborhood;
 
-            let mut context = RegressionContext {
-                x,
-                dimensions: dims,
-                y,
-                query_idx: i,
-                query_point: None,
+            let mut context = RegressionContext::new(
+                x_context,
+                dims,
+                y_context,
+                i,
+                None, // query_point is None when query_idx is used
                 neighborhood,
                 use_robustness,
                 robustness_weights,
-                weight_function: self.weight_function,
-                zero_weight_fallback: self.zero_weight_fallback,
-                polynomial_degree: self.polynomial_degree,
+                self.weight_function,
+                self.zero_weight_fallback,
+                self.polynomial_degree,
                 compute_leverage,
-                buffer: Some(fitting_buffer),
-            };
+                Some(fitting_buffer),
+            );
 
             if let Some((val, lev)) = context.fit() {
                 y_smooth[i] = val;
@@ -1232,7 +1250,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static> LoessExecu
                     lev_vec[i] = lev;
                 }
             } else {
-                y_smooth[i] = y[i];
+                y_smooth[i] = y_query[i];
                 if let Some(ref mut lev_vec) = leverage_out {
                     if lev_vec.len() <= i {
                         lev_vec.resize(i + 1, T::zero());
