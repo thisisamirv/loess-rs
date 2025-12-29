@@ -43,6 +43,7 @@ use num_traits::Float;
 // Internal dependencies
 use crate::math::kernel::WeightFunction;
 use crate::math::neighborhood::Neighborhood;
+use crate::primitives::buffer::FittingBuffer;
 
 // ============================================================================
 // Polynomial Degree
@@ -368,27 +369,6 @@ impl ZeroWeightFallback {
 // Regression Context
 // ============================================================================
 
-/// Persistent buffers for local regression to avoid allocations.
-pub struct FittingBuffer<T: Float> {
-    /// Weights for each neighbor.
-    pub weights: Vec<T>,
-    /// Normal matrix X'WX.
-    pub xtw_x: Vec<T>,
-    /// Normal vector X'WY.
-    pub xtw_y: Vec<T>,
-}
-
-impl<T: Float> FittingBuffer<T> {
-    /// Create a new fitting buffer with estimated capacities.
-    pub fn new(k: usize, n_coeffs: usize) -> Self {
-        Self {
-            weights: Vec::with_capacity(k),
-            xtw_x: Vec::with_capacity(n_coeffs * n_coeffs),
-            xtw_y: Vec::with_capacity(n_coeffs),
-        }
-    }
-}
-
 /// Context containing all data needed to fit a single point (unified 1D/nD).
 pub struct RegressionContext<'a, T: Float> {
     /// Flattened array of predictor values.
@@ -646,11 +626,14 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
             }
 
             // Column equilibration
-            let mut col_norms = vec![T::one(); n_coeffs];
+            buf.col_norms.resize(n_coeffs, T::one());
+            let col_norms = &mut buf.col_norms;
             for (j, norm) in col_norms.iter_mut().enumerate() {
                 let diag = buf.xtw_x[j * n_coeffs + j];
                 if diag > T::epsilon() {
                     *norm = diag.sqrt();
+                } else {
+                    *norm = T::one();
                 }
             }
             for i in 0..n_coeffs {

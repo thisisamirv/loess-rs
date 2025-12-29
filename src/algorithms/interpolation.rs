@@ -29,9 +29,8 @@ use core::option::Option;
 use num_traits::Float;
 
 // Internal dependencies
-use crate::algorithms::regression::FittingBuffer;
-use crate::engine::workspace::LoessWorkspace;
-use crate::math::neighborhood::{KDTree, Neighborhood, PointDistance};
+use crate::math::neighborhood::{KDTree, Neighborhood, NodeDistance, PointDistance};
+use crate::primitives::buffer::{FittingBuffer, NeighborhoodSearchBuffer};
 
 // ============================================================================
 // Surface Cell
@@ -99,8 +98,10 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         kdtree: &KDTree<T>,
         max_vertices: usize,
         mut fitter: F,
-        workspace: &mut LoessWorkspace<T>,
-        cell_size: T,
+        search_buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
+        neighborhood: &mut Neighborhood<T>,
+        fitting_buffer: &mut FittingBuffer<T>,
+        cell_fraction: T,
     ) -> Self
     where
         D: PointDistance<T>,
@@ -172,7 +173,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         // Cleveland's subdivision parameters:
         // new_cell = span * cell
         // Then: fc = floor(n * new_cell) = floor(n * span * cell)
-        let fc = (T::from(n).unwrap() * cell_size * fraction)
+        let fc = (T::from(n).unwrap() * cell_fraction * fraction)
             .floor()
             .to_usize()
             .unwrap_or(1)
@@ -206,10 +207,9 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 window_size,
                 dist_calc,
                 None,
-                &mut workspace.search_buffer,
-                &mut workspace.neighborhood,
+                search_buffer,
+                neighborhood,
             );
-            let neighborhood = &workspace.neighborhood;
 
             let base_idx = v_idx * stride;
 
@@ -223,11 +223,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
 
             // Fit local regression at this vertex using injected fitter
             // Returns [value, d/dx1, d/dx2, ..., d/dxd]
-            if let Some(coeffs) = fitter(
-                vertex,
-                &workspace.neighborhood,
-                &mut workspace.fitting_buffer,
-            ) {
+            if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
                 for (i, &c) in coeffs.iter().take(stride).enumerate() {
                     vertex_data[base_idx + i] = c;
                 }
@@ -251,6 +247,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     ///
     /// This is used during robustness iterations to update vertex fits
     /// with new robustness weights, avoiding the expensive cell subdivision.
+    #[allow(clippy::too_many_arguments)]
     pub fn refit_values<D, F>(
         &mut self,
         y: &[T],
@@ -258,7 +255,9 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         window_size: usize,
         dist_calc: &D,
         mut fitter: F,
-        workspace: &mut LoessWorkspace<T>,
+        search_buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
+        neighborhood: &mut Neighborhood<T>,
+        fitting_buffer: &mut FittingBuffer<T>,
     ) where
         D: PointDistance<T>,
         F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>) -> Option<Vec<T>>,
@@ -273,10 +272,9 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 window_size,
                 dist_calc,
                 None,
-                &mut workspace.search_buffer,
-                &mut workspace.neighborhood,
+                search_buffer,
+                neighborhood,
             );
-            let neighborhood = &workspace.neighborhood;
 
             let base_idx = v_idx * stride;
 
@@ -291,11 +289,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             }
 
             // Fit local regression at this vertex using injected fitter
-            if let Some(coeffs) = fitter(
-                vertex,
-                &workspace.neighborhood,
-                &mut workspace.fitting_buffer,
-            ) {
+            if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
                 for (i, &c) in coeffs.iter().take(stride).enumerate() {
                     self.vertex_data[base_idx + i] = c;
                 }

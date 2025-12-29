@@ -2,7 +2,8 @@
 
 use loess_rs::internals::engine::executor::LoessDistanceCalculator;
 use loess_rs::internals::math::distance::DistanceMetric;
-use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood, NeighborhoodSearchBuffer};
+use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood};
+use loess_rs::internals::primitives::buffer::NeighborhoodSearchBuffer;
 
 #[test]
 fn test_kdtree_simple_2d() {

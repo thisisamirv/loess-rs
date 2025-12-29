@@ -27,9 +27,6 @@
 /// Unified execution engine for LOESS smoothing.
 pub mod executor;
 
-/// Workspace for reusable buffers.
-pub mod workspace;
-
 /// Validation utilities.
 pub mod validator;
 

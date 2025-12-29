@@ -28,6 +28,7 @@
 //!
 //! * This module does not perform the actual smoothing (done via callback).
 //! * This module does not provide confidence intervals for CV scores.
+//!
 
 // Feature-gated dependencies
 #[cfg(not(feature = "std"))]
@@ -37,7 +38,11 @@ use std::vec::Vec;
 
 // External dependencies
 use core::cmp::Ordering::Equal;
+use core::fmt::Debug;
 use num_traits::Float;
+
+// Internal dependencies
+use crate::primitives::buffer::CVBuffer;
 
 // ============================================================================
 // Internal PRNG
@@ -158,9 +163,10 @@ impl CVKind {
         seed: Option<u64>,
         mut smoother: F,
         mut predictor: Option<P>,
+        cv_buffer: Option<&mut CVBuffer<T>>,
     ) -> (T, Vec<T>)
     where
-        T: Float,
+        T: Float + Debug + Send + Sync + 'static,
         F: FnMut(&[T], &[T], T) -> Vec<T>,
         P: FnMut(&[T], &[T], &[T], T) -> Vec<T>,
     {
@@ -174,6 +180,7 @@ impl CVKind {
                 seed,
                 &mut smoother,
                 predictor.as_mut(),
+                cv_buffer,
             ),
             CVKind::LOOCV => Self::leave_one_out_cross_validation(
                 x,
@@ -182,6 +189,7 @@ impl CVKind {
                 fractions,
                 &mut smoother,
                 predictor.as_mut(),
+                cv_buffer,
             ),
         }
     }
@@ -373,9 +381,10 @@ impl CVKind {
         seed: Option<u64>,
         smoother: &mut F,
         mut predictor: Option<&mut P>,
+        mut cv_buffer: Option<&mut CVBuffer<T>>,
     ) -> (T, Vec<T>)
     where
-        T: Float,
+        T: Float + Debug + Send + Sync + 'static,
         F: FnMut(&[T], &[T], T) -> Vec<T>,
         P: FnMut(&[T], &[T], &[T], T) -> Vec<T>,
     {
@@ -400,11 +409,15 @@ impl CVKind {
             }
         }
 
-        // Pre-allocate scratch buffers
-        let mut train_x = Vec::with_capacity(n * dims);
-        let mut train_y = Vec::with_capacity(n);
-        let mut test_x = Vec::with_capacity(n * dims);
-        let mut test_y = Vec::with_capacity(n);
+        // Local scratch buffers if no workspace provided
+        let mut local_train_x: Vec<T> = Vec::new();
+        let mut local_train_y: Vec<T> = Vec::new();
+        let mut local_test_x: Vec<T> = Vec::new();
+        let mut local_test_y: Vec<T> = Vec::new();
+
+        if let Some(ref mut cv) = cv_buffer {
+            cv.ensure_capacity(n, dims); // Ensure subsets fit
+        }
 
         for (frac_idx, &frac) in fractions.iter().enumerate() {
             let mut fold_rmses = Vec::with_capacity(k);
@@ -418,59 +431,70 @@ impl CVKind {
                 };
 
                 // Build training and test sets
-                train_x.clear();
-                train_y.clear();
+                let (tx, ty, tex, tey) = if let Some(ref mut cv) = cv_buffer {
+                    (
+                        &mut cv.train_x,
+                        &mut cv.train_y,
+                        &mut cv.test_x,
+                        &mut cv.test_y,
+                    )
+                } else {
+                    (
+                        &mut local_train_x,
+                        &mut local_train_y,
+                        &mut local_test_x,
+                        &mut local_test_y,
+                    )
+                };
+
+                tx.clear();
+                ty.clear();
                 for &idx in &indices[0..test_start] {
                     let offset = idx * dims;
-                    train_x.extend_from_slice(&x[offset..offset + dims]);
-                    train_y.push(y[idx]);
+                    tx.extend_from_slice(&x[offset..offset + dims]);
+                    ty.push(y[idx]);
                 }
                 for &idx in &indices[test_end..n] {
                     let offset = idx * dims;
-                    train_x.extend_from_slice(&x[offset..offset + dims]);
-                    train_y.push(y[idx]);
+                    tx.extend_from_slice(&x[offset..offset + dims]);
+                    ty.push(y[idx]);
                 }
 
-                test_x.clear();
-                test_y.clear();
+                tex.clear();
+                tey.clear();
                 for &idx in &indices[test_start..test_end] {
                     let offset = idx * dims;
-                    test_x.extend_from_slice(&x[offset..offset + dims]);
-                    test_y.push(y[idx]);
+                    tex.extend_from_slice(&x[offset..offset + dims]);
+                    tey.push(y[idx]);
                 }
 
                 let predictions = if let Some(ref mut p_fn) = predictor {
-                    p_fn(&train_x, &train_y, &test_x, frac)
+                    p_fn(tx, ty, tex, frac)
                 } else {
                     // 1D Case: Training data MUST be sorted for LOESS
-                    let mut train_data: Vec<(T, T)> = train_x
+                    let mut train_data: Vec<(T, T)> = tx
                         .iter()
-                        .zip(train_y.iter())
+                        .zip(ty.iter())
                         .map(|(&xi, &yi)| (xi, yi))
                         .collect();
                     train_data.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Equal));
                     let (sorted_tx, sorted_ty): (Vec<T>, Vec<T>) = train_data.into_iter().unzip();
 
                     let train_smooth = smoother(&sorted_tx, &sorted_ty, frac);
-                    let mut preds = vec![T::zero(); test_x.len()];
-                    Self::interpolate_prediction_batch(
-                        &sorted_tx,
-                        &train_smooth,
-                        &test_x,
-                        &mut preds,
-                    );
+                    let mut preds = vec![T::zero(); tex.len() / dims];
+                    Self::interpolate_prediction_batch(&sorted_tx, &train_smooth, tex, &mut preds);
                     preds
                 };
 
                 let mut fold_error = T::zero();
                 for (i, &predicted) in predictions.iter().enumerate() {
-                    let actual = test_y[i];
+                    let actual = tey[i];
                     let error = actual - predicted;
                     fold_error = fold_error + error * error;
                 }
 
-                if !test_y.is_empty() {
-                    fold_rmses.push((fold_error / T::from(test_y.len()).unwrap()).sqrt());
+                if !tey.is_empty() {
+                    fold_rmses.push((fold_error / T::from(tey.len()).unwrap()).sqrt());
                 }
             }
 
@@ -493,18 +517,24 @@ impl CVKind {
         fractions: &[T],
         smoother: &mut F,
         mut predictor: Option<&mut P>,
+        mut cv_buffer: Option<&mut CVBuffer<T>>,
     ) -> (T, Vec<T>)
     where
-        T: Float,
+        T: Float + Debug + Send + Sync + 'static,
         F: FnMut(&[T], &[T], T) -> Vec<T>,
         P: FnMut(&[T], &[T], &[T], T) -> Vec<T>,
     {
         let n = x.len() / dims;
         let mut cv_scores = vec![T::zero(); fractions.len()];
 
-        // Pre-allocate scratch buffers
-        let mut train_x = Vec::with_capacity((n - 1) * dims);
-        let mut train_y = Vec::with_capacity(n - 1);
+        // Local scratch buffers if no workspace provided
+        let mut local_train_x = Vec::new();
+        let mut local_train_y = Vec::new();
+
+        if let Some(ref mut cv) = cv_buffer {
+            cv.ensure_capacity(n, dims);
+        }
+
         let mut test_point = vec![T::zero(); dims];
 
         for (frac_idx, &frac) in fractions.iter().enumerate() {
@@ -512,28 +542,34 @@ impl CVKind {
 
             for i in 0..n {
                 // Build training set (all points except i)
-                train_x.clear();
-                train_y.clear();
+                let (tx, ty) = if let Some(ref mut cv) = cv_buffer {
+                    (&mut cv.train_x, &mut cv.train_y)
+                } else {
+                    (&mut local_train_x, &mut local_train_y)
+                };
+
+                tx.clear();
+                ty.clear();
                 for (j, &val) in y.iter().enumerate().take(i) {
                     let offset = j * dims;
-                    train_x.extend_from_slice(&x[offset..offset + dims]);
-                    train_y.push(val);
+                    tx.extend_from_slice(&x[offset..offset + dims]);
+                    ty.push(val);
                 }
-                for (j, &val) in y.iter().enumerate().skip(i + 1) {
+                for (j, &val) in y.iter().enumerate().take(n).skip(i + 1) {
                     let offset = j * dims;
-                    train_x.extend_from_slice(&x[offset..offset + dims]);
-                    train_y.push(val);
+                    tx.extend_from_slice(&x[offset..offset + dims]);
+                    ty.push(val);
                 }
 
                 let test_offset = i * dims;
                 test_point.copy_from_slice(&x[test_offset..test_offset + dims]);
 
                 let predicted = if let Some(ref mut p_fn) = predictor {
-                    let preds = p_fn(&train_x, &train_y, &test_point, frac);
+                    let preds = p_fn(tx, ty, &test_point, frac);
                     preds[0]
                 } else {
-                    let train_smooth = smoother(&train_x, &train_y, frac);
-                    Self::interpolate_prediction(&train_x, &train_smooth, test_point[0])
+                    let train_smooth = smoother(tx, ty, frac);
+                    Self::interpolate_prediction(tx, &train_smooth, test_point[0])
                 };
 
                 let error = y[i] - predicted;

@@ -41,6 +41,8 @@ use std::vec::Vec;
 use core::cmp::Ordering::{self, Equal};
 use num_traits::Float;
 
+use crate::primitives::buffer::{NeighborhoodSearchBuffer, NeighborhoodStorage};
+
 // ============================================================================
 // Selection Algorithm (Floyd-Rivest)
 // ============================================================================
@@ -238,25 +240,13 @@ impl<T: Float> Neighborhood<T> {
     }
 }
 
-/// Persistent buffers for KD-tree search to avoid allocations.
-pub struct NeighborhoodSearchBuffer<T: Float> {
-    heap: BinaryHeap<NodeDistance<T>>,
-    sort_vec: Vec<NodeDistance<T>>,
-}
-
-impl<T: Float> NeighborhoodSearchBuffer<T> {
-    /// Create a new search buffer with capacity k.
-    pub fn new(k: usize) -> Self {
-        Self {
-            heap: BinaryHeap::with_capacity(k),
-            sort_vec: Vec::with_capacity(k),
-        }
+impl<T: Float> NeighborhoodStorage for Neighborhood<T> {
+    fn with_capacity(k: usize) -> Self {
+        Self::with_capacity(k)
     }
 
-    /// Clear all internal buffers for reuse.
-    pub fn clear(&mut self) {
-        self.heap.clear();
-        self.sort_vec.clear();
+    fn capacity(&self) -> usize {
+        self.indices.capacity()
     }
 }
 
@@ -318,7 +308,7 @@ impl<T: Float> KDTree<T> {
         k: usize,
         dist_calc: &D,
         exclude_self: Option<usize>,
-        buffer: &mut NeighborhoodSearchBuffer<T>,
+        buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
         neighborhood: &mut Neighborhood<T>,
     ) {
         if k == 0 || self.root.is_none() {

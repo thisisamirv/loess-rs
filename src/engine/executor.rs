@@ -53,18 +53,18 @@ use num_traits::Float;
 
 // Internal dependencies
 use crate::algorithms::interpolation::InterpolationSurface;
-use crate::algorithms::regression::{
-    FittingBuffer, PolynomialDegree, RegressionContext, ZeroWeightFallback,
-};
+use crate::algorithms::regression::{PolynomialDegree, RegressionContext, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
-use crate::engine::workspace::LoessWorkspace;
 use crate::evaluation::cv::CVKind;
 use crate::evaluation::intervals::IntervalMethod;
 use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::DistanceMetric;
 use crate::math::kernel::WeightFunction;
-use crate::math::neighborhood::{KDTree, Neighborhood, PointDistance, floyd_rivest_select};
+use crate::math::neighborhood::{
+    KDTree, Neighborhood, NodeDistance, PointDistance, floyd_rivest_select,
+};
 use crate::primitives::backend::Backend;
+use crate::primitives::buffer::{FittingBuffer, LoessBuffer, NeighborhoodSearchBuffer};
 use crate::primitives::window::Window;
 
 /// Standard LOESS distance calculator.
@@ -570,11 +570,19 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         T: Float + Debug + Send + Sync + 'static,
     {
         let executor = LoessExecutor::from_config(&config);
+        let dims = executor.dimensions;
+        let n = x.len() / dims;
+        let eff_fraction = config.fraction.unwrap_or(executor.fraction);
+        let window_size = Window::calculate_span(n, eff_fraction);
+        let n_coeffs = executor.polynomial_degree.num_coefficients_nd(dims);
+
+        // Create a workspace to be reused across CV and final fit
+        let mut workspace =
+            LoessBuffer::<T, NodeDistance<T>, Neighborhood<T>>::new(n, dims, window_size, n_coeffs);
 
         // Handle cross-validation if configured
         if let Some(ref cv_fracs) = config.cv_fractions {
             let cv_kind = config.cv_kind.unwrap_or(CVKind::KFold(5));
-            let dims = executor.dimensions;
 
             // Run CV to find best fraction
             let (best_frac, scores) = if let Some(callback) = config.custom_cv_pass {
@@ -601,14 +609,23 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                     None
                 };
 
+                let LoessBuffer {
+                    ref mut cv_buffer, ..
+                } = workspace;
+
                 cv_kind.run(
                     x,
                     y,
                     dims,
                     cv_fracs,
                     config.cv_seed,
-                    |tx, ty, f| executor.run(tx, ty, Some(f), None, None, None).smoothed,
+                    |tx, ty, f| {
+                        executor
+                            .run(tx, ty, Some(f), None, None, None, None)
+                            .smoothed
+                    },
                     predictor,
+                    Some(cv_buffer),
                 )
             };
 
@@ -620,6 +637,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 Some(config.iterations),
                 config.auto_convergence,
                 config.return_variance.as_ref(),
+                Some(&mut workspace),
             );
             output.cv_scores = Some(scores);
             output.used_fraction = best_frac;
@@ -633,6 +651,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 Some(config.iterations),
                 config.auto_convergence,
                 config.return_variance.as_ref(),
+                Some(&mut workspace),
             )
         }
     }
@@ -646,6 +665,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
     ///
     /// * **Insufficient data** (n < 2): Returns original y-values.
     /// * **Global regression** (fraction >= 1.0): Performs OLS on the entire dataset.
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         x: &[T],
@@ -654,7 +674,11 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         max_iter: Option<usize>,
         tolerance: Option<T>,
         confidence_method: Option<&IntervalMethod<T>>,
-    ) -> ExecutorOutput<T> {
+        workspace: Option<&mut LoessBuffer<T, NodeDistance<T>, Neighborhood<T>>>,
+    ) -> ExecutorOutput<T>
+    where
+        T: Float + Debug + Send + Sync + 'static,
+    {
         let dims = self.dimensions;
         let n = x.len() / dims;
         let eff_fraction = fraction.unwrap_or(self.fraction);
@@ -662,15 +686,34 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         // Calculate window size
         let window_size = Window::calculate_span(n, eff_fraction);
         let target_iterations = max_iter.unwrap_or(self.iterations);
+        let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
 
         // Apply boundary policy (unified)
         let (ax, ay, mapping) = self.boundary_policy.apply(x, y, dims, window_size);
         let n_total = ay.len();
         let is_augmented = n_total > n;
 
+        let mut new_workspace;
+        let workspace = if let Some(ws) = workspace {
+            ws.ensure_capacity(n_total, dims, window_size, n_coeffs);
+            ws
+        } else {
+            new_workspace = LoessBuffer::<T, NodeDistance<T>, Neighborhood<T>>::new(
+                n_total,
+                dims,
+                window_size,
+                n_coeffs,
+            );
+            &mut new_workspace
+        };
+
         // Compute normalization scales using the full (augmented) range
-        let mut mins = vec![T::zero(); dims];
-        let mut maxs = vec![T::zero(); dims];
+        workspace.executor_buffer.ensure_capacity(n_total, dims);
+        let mins = &mut workspace.executor_buffer.mins;
+        let maxs = &mut workspace.executor_buffer.maxs;
+        mins.resize(dims, T::zero());
+        maxs.resize(dims, T::zero());
+
         // Initialize mins/maxs with first point
         mins[..dims].copy_from_slice(&ax[..dims]);
         maxs[..dims].copy_from_slice(&ax[..dims]);
@@ -686,13 +729,19 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             }
         }
 
-        let mut scales = vec![T::one(); dims];
+        workspace.executor_buffer.scales.resize(dims, T::one());
+        let scales_ref = &mut workspace.executor_buffer.scales;
         for d in 0..dims {
             let range = maxs[d] - mins[d];
             if range > T::zero() {
-                scales[d] = T::one() / range;
+                scales_ref[d] = T::one() / range;
+            } else {
+                scales_ref[d] = T::one();
             }
         }
+
+        // Copy scales locally for distance calculator to avoid borrowing workspace
+        let scales_local = workspace.executor_buffer.scales.clone();
 
         // Build KD-Tree for efficient kNN at vertices
         let kdtree = KDTree::new(&ax, dims);
@@ -700,18 +749,21 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         // Define distance calculator
         let dist_calc = LoessDistanceCalculator {
             metric: self.distance_metric.clone(),
-            scales: &scales,
+            scales: &scales_local,
         };
 
         // Resolution First: no default limit unless explicitly provided
         let max_vertices = self.interpolation_vertices.unwrap_or(usize::MAX);
 
         let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
-        let mut workspace = LoessWorkspace::new(window_size, n_coeffs);
+        workspace.ensure_capacity(n_total, dims, window_size, n_coeffs);
 
         let mut y_smooth = vec![T::zero(); n];
-        let mut robustness_weights = vec![T::one(); n_total];
-        let mut residuals = vec![T::zero(); n];
+        workspace
+            .executor_buffer
+            .robustness_weights
+            .resize(n_total, T::one());
+        workspace.executor_buffer.residuals.resize(n, T::zero());
 
         let mut iterations_performed = 0;
 
@@ -728,7 +780,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                         query_point: Some(vertex),
                         neighborhood,
                         use_robustness: false,
-                        robustness_weights: &robustness_weights,
+                        robustness_weights: &workspace.executor_buffer.robustness_weights,
                         weight_function: self.weight_function,
                         zero_weight_fallback: self.zero_weight_fallback,
                         polynomial_degree: self.polynomial_degree,
@@ -737,6 +789,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                     };
                     context.fit_with_coefficients()
                 };
+
+            let cell_fraction =
+                T::from(self.cell.unwrap_or(0.2)).unwrap_or_else(|| T::from(0.2).unwrap());
 
             let surface = InterpolationSurface::build(
                 &ax,
@@ -748,31 +803,34 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 &kdtree,
                 max_vertices,
                 fitter,
-                &mut workspace,
-                T::from(self.cell.unwrap_or(0.2)).unwrap_or(T::from(0.2).unwrap()),
+                &mut workspace.search_buffer,
+                &mut workspace.neighborhood,
+                &mut workspace.fitting_buffer,
+                cell_fraction,
             );
+            _surface_opt = Some(surface);
 
-            // Evaluate surface at original data points
+            // Re-evaluate surface at all original points
+            let surface = _surface_opt.as_ref().unwrap();
             for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
                 let query_offset = i * dims;
-                let query_point = &ax[query_offset..query_offset + dims];
-                *val = surface.evaluate(query_point);
+                *val = surface.evaluate(&ax[query_offset..query_offset + dims]);
             }
-
-            _surface_opt = Some(surface);
         } else {
             // Direct mode: initial fit
             self.smooth_pass(
                 &ax,
                 &ay,
                 window_size,
-                &robustness_weights,
+                &workspace.executor_buffer.robustness_weights,
                 false,
-                &scales,
+                &scales_local,
                 &mut y_smooth,
                 n,
                 &kdtree,
-                &mut workspace,
+                &mut workspace.search_buffer,
+                &mut workspace.neighborhood,
+                &mut workspace.fitting_buffer,
             );
         }
 
@@ -782,12 +840,17 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
 
             // Update robustness weights based on residuals from previous pass
             for i in 0..n {
-                residuals[i] = (y[i] - y_smooth[i]).abs();
+                workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
             }
 
-            let mut sorted_residuals = residuals.clone();
+            workspace.executor_buffer.sorted_residuals.clear();
+            workspace
+                .executor_buffer
+                .sorted_residuals
+                .extend_from_slice(&workspace.executor_buffer.residuals[..n]);
+            let sorted_residuals = &mut workspace.executor_buffer.sorted_residuals;
             let median_idx = n / 2;
-            floyd_rivest_select(&mut sorted_residuals, median_idx, |a, b| {
+            floyd_rivest_select(sorted_residuals, median_idx, |a: &T, b: &T| {
                 a.partial_cmp(b).unwrap_or(Equal)
             });
             let median_residual = sorted_residuals[median_idx];
@@ -802,17 +865,23 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             // 1. Compute new weights for original points
             // Use a temp buffer to avoid overwriting weights used by augmented points before sync
             let mut new_weights = vec![T::zero(); n];
-            for i in 0..n {
-                new_weights[i] = match self.robustness_method {
-                    RobustnessMethod::Bisquare => {
-                        RobustnessMethod::bisquare_weight(residuals[i], mad, T::from(6.0).unwrap())
-                    }
-                    RobustnessMethod::Huber => {
-                        RobustnessMethod::huber_weight(residuals[i], mad, T::from(1.345).unwrap())
-                    }
-                    RobustnessMethod::Talwar => {
-                        RobustnessMethod::talwar_weight(residuals[i], mad, T::from(2.5).unwrap())
-                    }
+            for (i, weight) in new_weights.iter_mut().enumerate().take(n) {
+                *weight = match self.robustness_method {
+                    RobustnessMethod::Bisquare => RobustnessMethod::bisquare_weight(
+                        workspace.executor_buffer.residuals[i],
+                        mad,
+                        T::from(6.0).unwrap(),
+                    ),
+                    RobustnessMethod::Huber => RobustnessMethod::huber_weight(
+                        workspace.executor_buffer.residuals[i],
+                        mad,
+                        T::from(1.345).unwrap(),
+                    ),
+                    RobustnessMethod::Talwar => RobustnessMethod::talwar_weight(
+                        workspace.executor_buffer.residuals[i],
+                        mad,
+                        T::from(2.5).unwrap(),
+                    ),
                 };
             }
 
@@ -821,9 +890,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
 
             if is_augmented {
                 for (aug_idx, &orig_idx) in mapping.iter().enumerate() {
-                    let old_w = robustness_weights[aug_idx];
+                    let old_w = workspace.executor_buffer.robustness_weights[aug_idx];
                     let new_w = new_weights[orig_idx];
-                    robustness_weights[aug_idx] = new_w;
+                    workspace.executor_buffer.robustness_weights[aug_idx] = new_w;
 
                     let change = (new_w - old_w).abs();
                     if change > max_change {
@@ -831,10 +900,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                     }
                 }
             } else {
-                for i in 0..n {
-                    let old_w = robustness_weights[i];
-                    let new_w = new_weights[i];
-                    robustness_weights[i] = new_w;
+                for (i, &new_w) in new_weights.iter().enumerate().take(n) {
+                    let old_w = workspace.executor_buffer.robustness_weights[i];
+                    workspace.executor_buffer.robustness_weights[i] = new_w;
 
                     let change = (new_w - old_w).abs();
                     if change > max_change {
@@ -864,7 +932,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                                     query_point: Some(vertex),
                                     neighborhood,
                                     use_robustness: true,
-                                    robustness_weights: &robustness_weights,
+                                    robustness_weights: &workspace
+                                        .executor_buffer
+                                        .robustness_weights,
                                     weight_function: self.weight_function,
                                     zero_weight_fallback: self.zero_weight_fallback,
                                     polynomial_degree: self.polynomial_degree,
@@ -880,7 +950,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                             window_size,
                             &dist_calc,
                             fitter,
-                            &mut workspace,
+                            &mut workspace.search_buffer,
+                            &mut workspace.neighborhood,
+                            &mut workspace.fitting_buffer,
                         );
 
                         // Re-evaluate at data points
@@ -896,13 +968,15 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                         &ax,
                         &ay,
                         window_size,
-                        &robustness_weights,
+                        &workspace.executor_buffer.robustness_weights,
                         true,
-                        &scales,
+                        &scales_local,
                         &mut y_smooth,
                         n,
                         &kdtree,
-                        &mut workspace,
+                        &mut workspace.search_buffer,
+                        &mut workspace.neighborhood,
+                        &mut workspace.fitting_buffer,
                     );
                 }
             }
@@ -912,11 +986,11 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         let se = if confidence_method.is_some() {
             // Estimate residual standard deviation (sigma) robustly
             for i in 0..n {
-                residuals[i] = (y[i] - y_smooth[i]).abs();
+                workspace.executor_buffer.residuals[i] = (y[i] - y_smooth[i]).abs();
             }
-            let mut sorted_residuals = residuals.clone();
+            let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
             let median_idx = n / 2;
-            floyd_rivest_select(&mut sorted_residuals, median_idx, |a, b| {
+            floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {
                 a.partial_cmp(b).unwrap_or(Equal)
             });
             let median_residual = sorted_residuals[median_idx];
@@ -931,33 +1005,16 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         };
 
         // Extract robustness weights for original points only
-        let final_robustness_weights: Vec<T> = if is_augmented {
-            // Find the start of the contiguous original data block [0, 1, ..., n-1]
-            // within the mapping to locate the corresponding robustness weights.
-            let mut start_offset = 0;
-            for i in 0..n_total {
-                if mapping[i] == 0 {
-                    let mut match_seq = true;
-                    if i + n <= n_total {
-                        for j in 0..n {
-                            if mapping[i + j] != j {
-                                match_seq = false;
-                                break;
-                            }
-                        }
-                    } else {
-                        match_seq = false;
-                    }
-
-                    if match_seq {
-                        start_offset = i;
-                        break;
-                    }
+        let final_robustness_weights = if is_augmented {
+            let mut rw = vec![T::one(); n];
+            for (i, &idx) in mapping.iter().enumerate().take(n_total) {
+                if idx < n {
+                    rw[idx] = workspace.executor_buffer.robustness_weights[i];
                 }
             }
-            robustness_weights[start_offset..start_offset + n].to_vec()
+            rw
         } else {
-            robustness_weights[..n].to_vec()
+            workspace.executor_buffer.robustness_weights[..n].to_vec()
         };
 
         ExecutorOutput {
@@ -1000,8 +1057,14 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
             scales,
         };
 
+        let n_points_train = x_train.len() / dims;
         let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
-        let mut workspace = LoessWorkspace::new(window_size, n_coeffs);
+        let mut workspace = LoessBuffer::<T, NodeDistance<T>, Neighborhood<T>>::new(
+            n_points_train,
+            dims,
+            window_size,
+            n_coeffs,
+        );
 
         for (i, pred) in y_pred.iter_mut().enumerate() {
             let query_offset = i * dims;
@@ -1059,7 +1122,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         y_smooth: &mut [T],
         original_n: usize,
         kdtree: &KDTree<T>,
-        workspace: &mut LoessWorkspace<T>,
+        search_buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
+        neighborhood: &mut Neighborhood<T>,
+        fitting_buffer: &mut FittingBuffer<T>,
     ) where
         T: Float + Debug + Send + Sync + 'static,
     {
@@ -1078,10 +1143,10 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 window_size,
                 &dist_calc,
                 None,
-                &mut workspace.search_buffer,
-                &mut workspace.neighborhood,
+                search_buffer,
+                neighborhood,
             );
-            let neighborhood = &workspace.neighborhood;
+            let neighborhood = &neighborhood;
 
             let mut context = RegressionContext {
                 x,
@@ -1096,7 +1161,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 zero_weight_fallback: self.zero_weight_fallback,
                 polynomial_degree: self.polynomial_degree,
                 compute_leverage: false,
-                buffer: Some(&mut workspace.fitting_buffer),
+                buffer: Some(fitting_buffer),
             };
 
             if let Some((val, _)) = context.fit() {

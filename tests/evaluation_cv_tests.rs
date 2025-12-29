@@ -265,6 +265,7 @@ fn test_cv_method_run_edge_cases() {
         None,
         smoother,
         None::<fn(&[f64], &[f64], &[f64], f64) -> Vec<f64>>,
+        None,
     );
     assert_eq!(best_mini, 0.5);
 }
@@ -290,6 +291,7 @@ fn test_kfold_insufficient_data() {
         None,
         smoother,
         None::<fn(&[f64], &[f64], &[f64], f64) -> Vec<f64>>,
+        None,
     );
     assert!(best > 0.0);
     assert_eq!(scores.len(), 2);
@@ -313,6 +315,7 @@ fn test_loocv_minimal_data() {
         None,
         smoother,
         None::<fn(&[f64], &[f64], &[f64], f64) -> Vec<f64>>,
+        None,
     );
     assert_eq!(best, 0.5);
     assert_eq!(scores.len(), 1);

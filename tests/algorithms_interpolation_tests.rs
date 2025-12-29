@@ -1,24 +1,22 @@
 #![cfg(feature = "dev")]
-//! Tests for interpolation algorithms.
-//!
-//! These tests verify the `InterpolationSurface` and its multilinear interpolation
-//! capabilities used for efficient nD LOESS evaluation.
-//!
-//! ## Test Organization
-//!
-//! 1. **Surface Construction** - Verifies cell subdivision and vertex creation
-//! 2. **Interpolation Accuracy** - Verifies 1D (linear) and 2D (bilinear) interpolation
-//! 3. **Adaptive Subdivision** - Verifies finding high-variance regions
-//! 4. **Edge Cases** - Boundary conditions and degenerate inputs
-
+// Tests for interpolation algorithms.
+//
+// These tests verify the `InterpolationSurface` and its multilinear interpolation
+// capabilities used for efficient nD LOESS evaluation.
+//
+// ## Test Organization
+//
+// 1. **Surface Construction** - Verifies cell subdivision and vertex creation
+// 2. **Interpolation Accuracy** - Verifies 1D (linear) and 2D (bilinear) interpolation
+// 3. **Adaptive Subdivision** - Verifies finding high-variance regions
+// 4. **Edge Cases** - Boundary conditions and degenerate inputs
 use approx::assert_relative_eq;
 
 use loess_rs::internals::algorithms::interpolation::InterpolationSurface;
-use loess_rs::internals::algorithms::regression::FittingBuffer;
 use loess_rs::internals::engine::executor::LoessDistanceCalculator;
-use loess_rs::internals::engine::workspace::LoessWorkspace;
 use loess_rs::internals::math::distance::DistanceMetric;
-use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood};
+use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood, NodeDistance};
+use loess_rs::internals::primitives::buffer::{FittingBuffer, LoessBuffer};
 
 // ============================================================================
 // Helper Functions & Mocks
@@ -48,7 +46,14 @@ fn test_build_simple_1d() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
 
-    let mut workspace = LoessWorkspace::new(2, 2); // k=2, n_coeffs=2 (1D linear)
+    let mut workspace =
+        LoessBuffer::<f64, NodeDistance<f64>, Neighborhood<f64>>::new(x.len(), dimensions, 2, 2); // k=2, n_coeffs=2 (1D linear)
+    let LoessBuffer {
+        ref mut search_buffer,
+        ref mut neighborhood,
+        ref mut fitting_buffer,
+        ..
+    } = workspace;
 
     // Simple fitter that just returns the x-coordinate (identity)
     let fitter = |vertex: &[f64],
@@ -66,7 +71,9 @@ fn test_build_simple_1d() {
         &kdtree,
         10, // Max vertices
         fitter,
-        &mut workspace,
+        search_buffer,
+        neighborhood,
+        fitting_buffer,
         0.2,
     );
 
@@ -99,7 +106,14 @@ fn test_build_simple_2d() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
 
-    let mut workspace = LoessWorkspace::new(4, 3); // k=4, n_coeffs=3 (2D linear)
+    let mut workspace =
+        LoessBuffer::<f64, NodeDistance<f64>, Neighborhood<f64>>::new(4, dimensions, 4, 3); // k=4, n_coeffs=3 (2D linear)
+    let LoessBuffer {
+        ref mut search_buffer,
+        ref mut neighborhood,
+        ref mut fitting_buffer,
+        ..
+    } = workspace;
 
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
@@ -116,7 +130,9 @@ fn test_build_simple_2d() {
         &kdtree,
         20,
         fitter,
-        &mut workspace,
+        search_buffer,
+        neighborhood,
+        fitting_buffer,
         0.2,
     );
 
@@ -139,7 +155,13 @@ fn test_interpolate_1d_linear() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let mut workspace = LoessWorkspace::new(2, 2);
+    let mut workspace = LoessBuffer::new(x.len(), dimensions, 2, 2);
+    let LoessBuffer {
+        ref mut search_buffer,
+        ref mut neighborhood,
+        ref mut fitting_buffer,
+        ..
+    } = workspace;
 
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
@@ -156,7 +178,9 @@ fn test_interpolate_1d_linear() {
         &kdtree,
         10,
         fitter,
-        &mut workspace,
+        search_buffer,
+        neighborhood,
+        fitting_buffer,
         0.2,
     );
 
@@ -179,7 +203,15 @@ fn test_interpolate_2d_bilinear() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let mut workspace = LoessWorkspace::new(4, 3);
+    let mut workspace =
+        LoessBuffer::<f64, NodeDistance<f64>, Neighborhood<f64>>::new(y.len(), dimensions, 4, 3);
+    let LoessBuffer {
+        ref mut search_buffer,
+        ref mut neighborhood,
+        ref mut fitting_buffer,
+        ..
+    } = workspace;
+
     let fitter =
         |vertex: &[f64], _: &Neighborhood<f64>, _: &mut FittingBuffer<f64>| -> Option<Vec<f64>> {
             Some(vec![2.0 * vertex[0] + 3.0 * vertex[1] + 1.0, 2.0, 3.0])
@@ -195,7 +227,9 @@ fn test_interpolate_2d_bilinear() {
         &kdtree,
         20,
         fitter,
-        &mut workspace,
+        search_buffer,
+        neighborhood,
+        fitting_buffer,
         0.2,
     );
 
@@ -224,7 +258,15 @@ fn test_adaptive_subdivision() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let mut workspace = LoessWorkspace::new(6, 2);
+    let mut workspace =
+        LoessBuffer::<f64, NodeDistance<f64>, Neighborhood<f64>>::new(x.len(), dimensions, 6, 2);
+    let LoessBuffer {
+        ref mut search_buffer,
+        ref mut neighborhood,
+        ref mut fitting_buffer,
+        ..
+    } = workspace;
+
     // Fitter returns x^2
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
@@ -241,7 +283,9 @@ fn test_adaptive_subdivision() {
         &kdtree,
         100, // Allow many vertices to force subdivision
         fitter,
-        &mut workspace,
+        search_buffer,
+        neighborhood,
+        fitting_buffer,
         0.2,
     );
 
@@ -266,7 +310,13 @@ fn test_interpolate_boundary_clamping() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let mut workspace = LoessWorkspace::new(2, 2);
+    let mut workspace = LoessBuffer::new(x.len(), dimensions, 2, 2);
+    let LoessBuffer {
+        ref mut search_buffer,
+        ref mut neighborhood,
+        ref mut fitting_buffer,
+        ..
+    } = workspace;
 
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
@@ -283,7 +333,9 @@ fn test_interpolate_boundary_clamping() {
         &kdtree,
         10,
         fitter,
-        &mut workspace,
+        search_buffer,
+        neighborhood,
+        fitting_buffer,
         0.2,
     );
 
@@ -307,7 +359,14 @@ fn test_fitter_fallback() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
 
-    let mut workspace = LoessWorkspace::new(1, 2);
+    let mut workspace =
+        LoessBuffer::<f64, NodeDistance<f64>, Neighborhood<f64>>::new(x.len(), dimensions, 1, 2);
+    let LoessBuffer {
+        ref mut search_buffer,
+        ref mut neighborhood,
+        ref mut fitting_buffer,
+        ..
+    } = workspace;
 
     // Broken fitter always returns None
     let fitter =
@@ -323,7 +382,9 @@ fn test_fitter_fallback() {
         &kdtree,
         10,
         fitter,
-        &mut workspace,
+        search_buffer,
+        neighborhood,
+        fitting_buffer,
         0.2,
     );
 

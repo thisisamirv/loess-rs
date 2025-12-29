@@ -23,7 +23,8 @@ use loess_rs::internals::algorithms::regression::{
 };
 use loess_rs::internals::math::distance::DistanceMetric;
 use loess_rs::internals::math::kernel::WeightFunction;
-use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood, NeighborhoodSearchBuffer};
+use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood};
+use loess_rs::internals::primitives::buffer::NeighborhoodSearchBuffer;
 use loess_rs::internals::primitives::window::Window;
 use loess_rs::prelude::*;
 

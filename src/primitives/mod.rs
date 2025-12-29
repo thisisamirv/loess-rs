@@ -32,3 +32,6 @@ pub mod errors;
 
 /// Execution backend configuration.
 pub mod backend;
+
+/// Buffer management.
+pub mod buffer;
