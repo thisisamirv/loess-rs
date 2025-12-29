@@ -311,31 +311,8 @@ impl<T: Float> KDTree<T> {
         }
     }
 
-    /// Find k-nearest neighbors using the KD-tree.
-    ///
-    /// Uses the tree structure for efficient pruning during search.
-    pub fn find_k_nearest<D: PointDistance<T>>(
-        &self,
-        query: &[T],
-        k: usize,
-        dist_calc: &D,
-        exclude_self: Option<usize>,
-    ) -> Neighborhood<T> {
-        let mut buffer = NeighborhoodSearchBuffer::new(k);
-        let mut neighborhood = Neighborhood::with_capacity(k);
-        self.find_k_nearest_with_buffer(
-            query,
-            k,
-            dist_calc,
-            exclude_self,
-            &mut buffer,
-            &mut neighborhood,
-        );
-        neighborhood
-    }
-
     /// Optimized search that reuses an existing NeighborhoodSearchBuffer and Neighborhood.
-    pub fn find_k_nearest_with_buffer<D: PointDistance<T>>(
+    pub fn find_k_nearest<D: PointDistance<T>>(
         &self,
         query: &[T],
         k: usize,

@@ -57,6 +57,7 @@ use crate::algorithms::regression::{
     FittingBuffer, PolynomialDegree, RegressionContext, ZeroWeightFallback,
 };
 use crate::algorithms::robustness::RobustnessMethod;
+use crate::engine::workspace::LoessWorkspace;
 use crate::evaluation::cv::CVKind;
 use crate::evaluation::intervals::IntervalMethod;
 use crate::math::boundary::BoundaryPolicy;
@@ -593,7 +594,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                             test_x,
                             window_size,
                             &scales,
-                            Some(&kdtree),
+                            &kdtree,
                         )
                     })
                 } else {
@@ -705,6 +706,9 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         // Resolution First: no default limit unless explicitly provided
         let max_vertices = self.interpolation_vertices.unwrap_or(usize::MAX);
 
+        let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
+        let mut workspace = LoessWorkspace::new(window_size, n_coeffs);
+
         let mut y_smooth = vec![T::zero(); n];
         let mut robustness_weights = vec![T::one(); n_total];
         let mut residuals = vec![T::zero(); n];
@@ -714,25 +718,25 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         // For interpolation mode: build surface once before iterations
         let mut _surface_opt: Option<InterpolationSurface<T>> = None;
         if self.surface_mode == SurfaceMode::Interpolation {
-            // Initial build with unit robustness weights
-            let fitter = |vertex: &[T], neighborhood: &Neighborhood<T>| {
-                let mut context = RegressionContext {
-                    x: &ax,
-                    dimensions: dims,
-                    y: &ay,
-                    query_idx: 0,
-                    query_point: Some(vertex),
-                    neighborhood,
-                    use_robustness: false,
-                    robustness_weights: &robustness_weights,
-                    weight_function: self.weight_function,
-                    zero_weight_fallback: self.zero_weight_fallback,
-                    polynomial_degree: self.polynomial_degree,
-                    compute_leverage: false,
-                    buffer: None,
+            let fitter =
+                |vertex: &[T], neighborhood: &Neighborhood<T>, fb: &mut FittingBuffer<T>| {
+                    let mut context = RegressionContext {
+                        x: &ax,
+                        dimensions: dims,
+                        y: &ay,
+                        query_idx: 0,
+                        query_point: Some(vertex),
+                        neighborhood,
+                        use_robustness: false,
+                        robustness_weights: &robustness_weights,
+                        weight_function: self.weight_function,
+                        zero_weight_fallback: self.zero_weight_fallback,
+                        polynomial_degree: self.polynomial_degree,
+                        compute_leverage: false,
+                        buffer: Some(fb),
+                    };
+                    context.fit_with_coefficients()
                 };
-                context.fit_with_coefficients()
-            };
 
             let surface = InterpolationSurface::build(
                 &ax,
@@ -744,6 +748,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 &kdtree,
                 max_vertices,
                 fitter,
+                &mut workspace,
                 T::from(self.cell.unwrap_or(0.2)).unwrap_or(T::from(0.2).unwrap()),
             );
 
@@ -767,6 +772,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 &mut y_smooth,
                 n,
                 &kdtree,
+                &mut workspace,
             );
         }
 
@@ -846,26 +852,36 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 SurfaceMode::Interpolation => {
                     // Refit vertex values using existing surface structure
                     if let Some(ref mut surface) = _surface_opt {
-                        let fitter = |vertex: &[T], neighborhood: &Neighborhood<T>| {
-                            let mut context = RegressionContext {
-                                x: &ax,
-                                dimensions: dims,
-                                y: &ay,
-                                query_idx: 0,
-                                query_point: Some(vertex),
-                                neighborhood,
-                                use_robustness: true,
-                                robustness_weights: &robustness_weights,
-                                weight_function: self.weight_function,
-                                zero_weight_fallback: self.zero_weight_fallback,
-                                polynomial_degree: self.polynomial_degree,
-                                compute_leverage: false,
-                                buffer: None,
+                        let fitter =
+                            |vertex: &[T],
+                             neighborhood: &Neighborhood<T>,
+                             fb: &mut FittingBuffer<T>| {
+                                let mut context = RegressionContext {
+                                    x: &ax,
+                                    dimensions: dims,
+                                    y: &ay,
+                                    query_idx: 0,
+                                    query_point: Some(vertex),
+                                    neighborhood,
+                                    use_robustness: true,
+                                    robustness_weights: &robustness_weights,
+                                    weight_function: self.weight_function,
+                                    zero_weight_fallback: self.zero_weight_fallback,
+                                    polynomial_degree: self.polynomial_degree,
+                                    compute_leverage: false,
+                                    buffer: Some(fb),
+                                };
+                                context.fit_with_coefficients()
                             };
-                            context.fit_with_coefficients()
-                        };
 
-                        surface.refit_values(&ay, &kdtree, window_size, &dist_calc, fitter);
+                        surface.refit_values(
+                            &ay,
+                            &kdtree,
+                            window_size,
+                            &dist_calc,
+                            fitter,
+                            &mut workspace,
+                        );
 
                         // Re-evaluate at data points
                         for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
@@ -886,6 +902,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                         &mut y_smooth,
                         n,
                         &kdtree,
+                        &mut workspace,
                     );
                 }
             }
@@ -969,7 +986,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         x_query: &[T],
         window_size: usize,
         scales: &[T],
-        kdtree: Option<&KDTree<T>>,
+        kdtree: &KDTree<T>,
     ) -> Vec<T>
     where
         T: Float + Debug + Send + Sync + 'static,
@@ -984,16 +1001,22 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         };
 
         let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
-        let mut buffer = FittingBuffer::new(window_size, n_coeffs);
+        let mut workspace = LoessWorkspace::new(window_size, n_coeffs);
 
         for (i, pred) in y_pred.iter_mut().enumerate() {
             let query_offset = i * dims;
             let query_point = &x_query[query_offset..query_offset + dims];
 
             // Find neighbors in training data (KD-tree is always available)
-            let neighborhood = kdtree
-                .expect("KD-tree must be provided for prediction")
-                .find_k_nearest(query_point, window_size, &dist_calc, None);
+            kdtree.find_k_nearest(
+                query_point,
+                window_size,
+                &dist_calc,
+                None,
+                &mut workspace.search_buffer,
+                &mut workspace.neighborhood,
+            );
+            let neighborhood = &workspace.neighborhood;
 
             // Fit local polynomial
             let mut context = RegressionContext {
@@ -1002,14 +1025,14 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 y: y_train,
                 query_idx: 0,
                 query_point: Some(query_point),
-                neighborhood: &neighborhood,
+                neighborhood,
                 use_robustness: true,
                 robustness_weights,
                 weight_function: self.weight_function,
                 zero_weight_fallback: ZeroWeightFallback::default(), // CV fallback
                 polynomial_degree: self.polynomial_degree,
                 compute_leverage: false,
-                buffer: Some(&mut buffer),
+                buffer: Some(&mut workspace.fitting_buffer),
             };
 
             if let Some((val, _)) = context.fit() {
@@ -1036,23 +1059,29 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
         y_smooth: &mut [T],
         original_n: usize,
         kdtree: &KDTree<T>,
+        workspace: &mut LoessWorkspace<T>,
     ) where
         T: Float + Debug + Send + Sync + 'static,
     {
         let dims = self.dimensions;
-
         let dist_calc = LoessDistanceCalculator {
             metric: self.distance_metric.clone(),
             scales,
         };
 
-        let n_coeffs = self.polynomial_degree.num_coefficients_nd(dims);
-        let mut buffer = FittingBuffer::new(window_size, n_coeffs);
-
         for i in 0..original_n {
             let query_offset = i * dims;
             let query_point = &x[query_offset..query_offset + dims];
-            let neighborhood = kdtree.find_k_nearest(query_point, window_size, &dist_calc, None);
+
+            kdtree.find_k_nearest(
+                query_point,
+                window_size,
+                &dist_calc,
+                None,
+                &mut workspace.search_buffer,
+                &mut workspace.neighborhood,
+            );
+            let neighborhood = &workspace.neighborhood;
 
             let mut context = RegressionContext {
                 x,
@@ -1060,14 +1089,14 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                 y,
                 query_idx: i,
                 query_point: None,
-                neighborhood: &neighborhood,
+                neighborhood,
                 use_robustness,
                 robustness_weights,
                 weight_function: self.weight_function,
                 zero_weight_fallback: self.zero_weight_fallback,
                 polynomial_degree: self.polynomial_degree,
                 compute_leverage: false,
-                buffer: Some(&mut buffer),
+                buffer: Some(&mut workspace.fitting_buffer),
             };
 
             if let Some((val, _)) = context.fit() {

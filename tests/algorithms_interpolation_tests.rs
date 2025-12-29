@@ -14,7 +14,9 @@
 use approx::assert_relative_eq;
 
 use loess_rs::internals::algorithms::interpolation::InterpolationSurface;
+use loess_rs::internals::algorithms::regression::FittingBuffer;
 use loess_rs::internals::engine::executor::LoessDistanceCalculator;
+use loess_rs::internals::engine::workspace::LoessWorkspace;
 use loess_rs::internals::math::distance::DistanceMetric;
 use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood};
 
@@ -46,13 +48,26 @@ fn test_build_simple_1d() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
 
+    let mut workspace = LoessWorkspace::new(2, 2); // k=2, n_coeffs=2 (1D linear)
+
     // Simple fitter that just returns the x-coordinate (identity)
-    let fitter =
-        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
+    let fitter = |vertex: &[f64],
+                  _: &Neighborhood<f64>,
+                  _: &mut FittingBuffer<f64>|
+     -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
-        &x, &y, dimensions, fraction, 2, &dist_calc, &kdtree, 10, // Max vertices
-        fitter, 0.2,
+        &x,
+        &y,
+        dimensions,
+        fraction,
+        2,
+        &dist_calc,
+        &kdtree,
+        10, // Max vertices
+        fitter,
+        &mut workspace,
+        0.2,
     );
 
     assert!(surface.vertex_data.len() >= 4); // At least 2 vertices * 2 values each
@@ -84,12 +99,25 @@ fn test_build_simple_2d() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
 
-    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> {
-        Some(vec![vertex[0] + vertex[1], 1.0, 1.0])
-    };
+    let mut workspace = LoessWorkspace::new(4, 3); // k=4, n_coeffs=3 (2D linear)
+
+    let fitter = |vertex: &[f64],
+                  _: &Neighborhood<f64>,
+                  _: &mut FittingBuffer<f64>|
+     -> Option<Vec<f64>> { Some(vec![vertex[0] + vertex[1], 1.0, 1.0]) };
 
     let surface = InterpolationSurface::build(
-        &x, &y, dimensions, fraction, 4, &dist_calc, &kdtree, 20, fitter, 0.2,
+        &x,
+        &y,
+        dimensions,
+        fraction,
+        4,
+        &dist_calc,
+        &kdtree,
+        20,
+        fitter,
+        &mut workspace,
+        0.2,
     );
 
     // Initial cell has 4 vertices (2^2)
@@ -111,11 +139,25 @@ fn test_interpolate_1d_linear() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let fitter =
-        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
+    let mut workspace = LoessWorkspace::new(2, 2);
+
+    let fitter = |vertex: &[f64],
+                  _: &Neighborhood<f64>,
+                  _: &mut FittingBuffer<f64>|
+     -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
-        &x, &y, dimensions, 0.5, 1, &dist_calc, &kdtree, 10, fitter, 0.2,
+        &x,
+        &y,
+        dimensions,
+        0.5,
+        1,
+        &dist_calc,
+        &kdtree,
+        10,
+        fitter,
+        &mut workspace,
+        0.2,
     );
 
     // Test points
@@ -137,12 +179,24 @@ fn test_interpolate_2d_bilinear() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> {
-        Some(vec![2.0 * vertex[0] + 3.0 * vertex[1] + 1.0, 2.0, 3.0])
-    };
+    let mut workspace = LoessWorkspace::new(4, 3);
+    let fitter =
+        |vertex: &[f64], _: &Neighborhood<f64>, _: &mut FittingBuffer<f64>| -> Option<Vec<f64>> {
+            Some(vec![2.0 * vertex[0] + 3.0 * vertex[1] + 1.0, 2.0, 3.0])
+        };
 
     let surface = InterpolationSurface::build(
-        &x, &y, dimensions, 1.0, 4, &dist_calc, &kdtree, 20, fitter, 0.2,
+        &x,
+        &y,
+        dimensions,
+        1.0,
+        4,
+        &dist_calc,
+        &kdtree,
+        20,
+        fitter,
+        &mut workspace,
+        0.2,
     );
 
     // Evaluate at center (1, 1) -> 2(1) + 3(1) + 1 = 6
@@ -170,15 +224,25 @@ fn test_adaptive_subdivision() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
+    let mut workspace = LoessWorkspace::new(6, 2);
     // Fitter returns x^2
-    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> {
-        Some(vec![vertex[0] * vertex[0], 2.0 * vertex[0]])
-    };
+    let fitter = |vertex: &[f64],
+                  _: &Neighborhood<f64>,
+                  _: &mut FittingBuffer<f64>|
+     -> Option<Vec<f64>> { Some(vec![vertex[0] * vertex[0], 2.0 * vertex[0]]) };
 
     let surface = InterpolationSurface::build(
-        &x, &y, dimensions, 0.3, 6, &dist_calc, &kdtree,
+        &x,
+        &y,
+        dimensions,
+        0.3,
+        6,
+        &dist_calc,
+        &kdtree,
         100, // Allow many vertices to force subdivision
-        fitter, 0.2,
+        fitter,
+        &mut workspace,
+        0.2,
     );
 
     // Should have more than just the initial 2 vertices
@@ -202,11 +266,25 @@ fn test_interpolate_boundary_clamping() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let fitter =
-        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
+    let mut workspace = LoessWorkspace::new(2, 2);
+
+    let fitter = |vertex: &[f64],
+                  _: &Neighborhood<f64>,
+                  _: &mut FittingBuffer<f64>|
+     -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
-        &x, &y, dimensions, 0.5, 1, &dist_calc, &kdtree, 10, fitter, 0.2,
+        &x,
+        &y,
+        dimensions,
+        0.5,
+        1,
+        &dist_calc,
+        &kdtree,
+        10,
+        fitter,
+        &mut workspace,
+        0.2,
     );
 
     // Far outside right (should be clamped to upper bound value)
@@ -229,11 +307,24 @@ fn test_fitter_fallback() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
 
+    let mut workspace = LoessWorkspace::new(1, 2);
+
     // Broken fitter always returns None
-    let fitter = |_: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { None };
+    let fitter =
+        |_: &[f64], _: &Neighborhood<f64>, _: &mut FittingBuffer<f64>| -> Option<Vec<f64>> { None };
 
     let surface = InterpolationSurface::build(
-        &x, &y, dimensions, 0.5, 1, &dist_calc, &kdtree, 10, fitter, 0.2,
+        &x,
+        &y,
+        dimensions,
+        0.5,
+        1,
+        &dist_calc,
+        &kdtree,
+        10,
+        fitter,
+        &mut workspace,
+        0.2,
     );
 
     // Should use mean (2.0)

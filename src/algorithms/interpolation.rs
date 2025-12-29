@@ -29,6 +29,8 @@ use core::option::Option;
 use num_traits::Float;
 
 // Internal dependencies
+use crate::algorithms::regression::FittingBuffer;
+use crate::engine::workspace::LoessWorkspace;
 use crate::math::neighborhood::{KDTree, Neighborhood, PointDistance};
 
 // ============================================================================
@@ -96,12 +98,13 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         dist_calc: &D,
         kdtree: &KDTree<T>,
         max_vertices: usize,
-        fitter: F,
+        mut fitter: F,
+        workspace: &mut LoessWorkspace<T>,
         cell_size: T,
     ) -> Self
     where
         D: PointDistance<T>,
-        F: Fn(&[T], &Neighborhood<T>) -> Option<Vec<T>>,
+        F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>) -> Option<Vec<T>>,
     {
         let n = x.len() / dimensions;
 
@@ -197,8 +200,16 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let mut vertex_data = vec![T::zero(); vertices.len() * stride];
 
         for (v_idx, vertex) in vertices.iter().enumerate() {
-            // Find neighbors for this vertex
-            let neighborhood = kdtree.find_k_nearest(vertex, window_size, dist_calc, None);
+            // Find neighbors for this vertex using workspace buffers
+            kdtree.find_k_nearest(
+                vertex,
+                window_size,
+                dist_calc,
+                None,
+                &mut workspace.search_buffer,
+                &mut workspace.neighborhood,
+            );
+            let neighborhood = &workspace.neighborhood;
 
             let base_idx = v_idx * stride;
 
@@ -212,7 +223,11 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
 
             // Fit local regression at this vertex using injected fitter
             // Returns [value, d/dx1, d/dx2, ..., d/dxd]
-            if let Some(coeffs) = fitter(vertex, &neighborhood) {
+            if let Some(coeffs) = fitter(
+                vertex,
+                &workspace.neighborhood,
+                &mut workspace.fitting_buffer,
+            ) {
                 for (i, &c) in coeffs.iter().take(stride).enumerate() {
                     vertex_data[base_idx + i] = c;
                 }
@@ -242,17 +257,26 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         kdtree: &KDTree<T>,
         window_size: usize,
         dist_calc: &D,
-        fitter: F,
+        mut fitter: F,
+        workspace: &mut LoessWorkspace<T>,
     ) where
         D: PointDistance<T>,
-        F: Fn(&[T], &Neighborhood<T>) -> Option<Vec<T>>,
+        F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>) -> Option<Vec<T>>,
     {
         let n = y.len() / self.dimensions;
         let stride = self.dimensions + 1; // d+1 values per vertex
 
         for (v_idx, vertex) in self.vertices.iter().enumerate() {
-            // Find neighbors for this vertex
-            let neighborhood = kdtree.find_k_nearest(vertex, window_size, dist_calc, None);
+            // Find neighbors for this vertex using workspace buffers
+            kdtree.find_k_nearest(
+                vertex,
+                window_size,
+                dist_calc,
+                None,
+                &mut workspace.search_buffer,
+                &mut workspace.neighborhood,
+            );
+            let neighborhood = &workspace.neighborhood;
 
             let base_idx = v_idx * stride;
 
@@ -267,7 +291,11 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             }
 
             // Fit local regression at this vertex using injected fitter
-            if let Some(coeffs) = fitter(vertex, &neighborhood) {
+            if let Some(coeffs) = fitter(
+                vertex,
+                &workspace.neighborhood,
+                &mut workspace.fitting_buffer,
+            ) {
                 for (i, &c) in coeffs.iter().take(stride).enumerate() {
                     self.vertex_data[base_idx + i] = c;
                 }

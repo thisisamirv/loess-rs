@@ -579,96 +579,208 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
         };
 
         // Build normal equations and solve
-        let mut xtw_x = vec![T::zero(); n_coeffs * n_coeffs];
-        let mut xtw_y = vec![T::zero(); n_coeffs];
+        let mut buffer = self.buffer.take();
+        let result = if let Some(ref mut buf) = buffer {
+            buf.weights.clear();
+            let weights = &mut buf.weights;
 
-        // Compute weights
-        let mut weights = Vec::with_capacity(n_neighbors);
-        for i in 0..n_neighbors {
-            let neighbor_idx = self.neighborhood.indices[i];
-            let dist = self.neighborhood.distances[i];
-            let u = (dist / max_distance).sqrt();
-            let kernel_w = self.weight_function.compute_weight(u);
-            let w = if self.use_robustness {
-                (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
+            for i in 0..n_neighbors {
+                let neighbor_idx = self.neighborhood.indices[i];
+                let dist = self.neighborhood.distances[i];
+                let u = (dist / max_distance).sqrt();
+                let kernel_w = self.weight_function.compute_weight(u);
+                let w = if self.use_robustness {
+                    (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
+                } else {
+                    kernel_w.sqrt()
+                };
+                weights.push(w);
+            }
+
+            buf.xtw_x.resize(n_coeffs * n_coeffs, T::zero());
+            buf.xtw_y.resize(n_coeffs, T::zero());
+
+            // Accumulate normal equations based on polynomial degree and dimensions
+            match (self.dimensions, self.polynomial_degree) {
+                (1, PolynomialDegree::Linear) => {
+                    self.accumulate_normal_equations(
+                        weights,
+                        Linear1DTermGenerator,
+                        query_point,
+                        &mut buf.xtw_x,
+                        &mut buf.xtw_y,
+                    );
+                }
+                (2, PolynomialDegree::Linear) => {
+                    self.accumulate_normal_equations(
+                        weights,
+                        Linear2DTermGenerator,
+                        query_point,
+                        &mut buf.xtw_x,
+                        &mut buf.xtw_y,
+                    );
+                }
+                (3, PolynomialDegree::Linear) => {
+                    self.accumulate_normal_equations(
+                        weights,
+                        Linear3DTermGenerator,
+                        query_point,
+                        &mut buf.xtw_x,
+                        &mut buf.xtw_y,
+                    );
+                }
+                _ => {
+                    let term_gen = GenericTermGenerator::new(
+                        self.polynomial_degree,
+                        self.dimensions,
+                        n_coeffs,
+                    );
+                    self.accumulate_normal_equations(
+                        weights,
+                        term_gen,
+                        query_point,
+                        &mut buf.xtw_x,
+                        &mut buf.xtw_y,
+                    );
+                }
+            }
+
+            // Column equilibration
+            let mut col_norms = vec![T::one(); n_coeffs];
+            for (j, norm) in col_norms.iter_mut().enumerate() {
+                let diag = buf.xtw_x[j * n_coeffs + j];
+                if diag > T::epsilon() {
+                    *norm = diag.sqrt();
+                }
+            }
+            for i in 0..n_coeffs {
+                for j in 0..n_coeffs {
+                    let idx = i * n_coeffs + j;
+                    buf.xtw_x[idx] = buf.xtw_x[idx] / (col_norms[i] * col_norms[j]);
+                }
+                buf.xtw_y[i] = buf.xtw_y[i] / col_norms[i];
+            }
+
+            // Solve
+            let beta = LinearSolver::solve_symmetric(&buf.xtw_x, &buf.xtw_y, n_coeffs);
+
+            if let Some(mut coeffs) = beta {
+                // Undo equilibration
+                for j in 0..n_coeffs {
+                    coeffs[j] = coeffs[j] / col_norms[j];
+                }
+                // Return coeffs padded/truncated to d+1 elements
+                let mut result = vec![T::zero(); d + 1];
+                for (i, &c) in coeffs.iter().take(d + 1).enumerate() {
+                    result[i] = c;
+                }
+                Some(result)
             } else {
-                kernel_w.sqrt()
-            };
-            weights.push(w);
-        }
+                None
+            }
+        } else {
+            // Build normal equations and solve (allocating version)
+            let mut xtw_x = vec![T::zero(); n_coeffs * n_coeffs];
+            let mut xtw_y = vec![T::zero(); n_coeffs];
 
-        // Accumulate normal equations based on polynomial degree and dimensions
-        match (self.dimensions, self.polynomial_degree) {
-            (1, PolynomialDegree::Linear) => {
-                self.accumulate_normal_equations(
-                    &weights,
-                    Linear1DTermGenerator,
-                    query_point,
-                    &mut xtw_x,
-                    &mut xtw_y,
-                );
+            // Compute weights
+            let mut weights = Vec::with_capacity(n_neighbors);
+            for i in 0..n_neighbors {
+                let neighbor_idx = self.neighborhood.indices[i];
+                let dist = self.neighborhood.distances[i];
+                let u = (dist / max_distance).sqrt();
+                let kernel_w = self.weight_function.compute_weight(u);
+                let w = if self.use_robustness {
+                    (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
+                } else {
+                    kernel_w.sqrt()
+                };
+                weights.push(w);
             }
-            (2, PolynomialDegree::Linear) => {
-                self.accumulate_normal_equations(
-                    &weights,
-                    Linear2DTermGenerator,
-                    query_point,
-                    &mut xtw_x,
-                    &mut xtw_y,
-                );
-            }
-            (3, PolynomialDegree::Linear) => {
-                self.accumulate_normal_equations(
-                    &weights,
-                    Linear3DTermGenerator,
-                    query_point,
-                    &mut xtw_x,
-                    &mut xtw_y,
-                );
-            }
-            _ => {
-                let term_gen =
-                    GenericTermGenerator::new(self.polynomial_degree, self.dimensions, n_coeffs);
-                self.accumulate_normal_equations(
-                    &weights,
-                    term_gen,
-                    query_point,
-                    &mut xtw_x,
-                    &mut xtw_y,
-                );
-            }
-        }
 
-        // Column equilibration
-        let mut col_norms = vec![T::one(); n_coeffs];
-        for j in 0..n_coeffs {
-            let diag = xtw_x[j * n_coeffs + j];
-            if diag > T::epsilon() {
-                col_norms[j] = diag.sqrt();
+            // Accumulate normal equations based on polynomial degree and dimensions
+            match (self.dimensions, self.polynomial_degree) {
+                (1, PolynomialDegree::Linear) => {
+                    self.accumulate_normal_equations(
+                        &weights,
+                        Linear1DTermGenerator,
+                        query_point,
+                        &mut xtw_x,
+                        &mut xtw_y,
+                    );
+                }
+                (2, PolynomialDegree::Linear) => {
+                    self.accumulate_normal_equations(
+                        &weights,
+                        Linear2DTermGenerator,
+                        query_point,
+                        &mut xtw_x,
+                        &mut xtw_y,
+                    );
+                }
+                (3, PolynomialDegree::Linear) => {
+                    self.accumulate_normal_equations(
+                        &weights,
+                        Linear3DTermGenerator,
+                        query_point,
+                        &mut xtw_x,
+                        &mut xtw_y,
+                    );
+                }
+                _ => {
+                    let term_gen = GenericTermGenerator::new(
+                        self.polynomial_degree,
+                        self.dimensions,
+                        n_coeffs,
+                    );
+                    self.accumulate_normal_equations(
+                        &weights,
+                        term_gen,
+                        query_point,
+                        &mut xtw_x,
+                        &mut xtw_y,
+                    );
+                }
             }
-        }
-        for i in 0..n_coeffs {
+
+            // Column equilibration
+            let mut col_norms = vec![T::one(); n_coeffs];
             for j in 0..n_coeffs {
-                let idx = i * n_coeffs + j;
-                xtw_x[idx] = xtw_x[idx] / (col_norms[i] * col_norms[j]);
+                let diag = xtw_x[j * n_coeffs + j];
+                if diag > T::epsilon() {
+                    col_norms[j] = diag.sqrt();
+                }
             }
-            xtw_y[i] = xtw_y[i] / col_norms[i];
-        }
+            for i in 0..n_coeffs {
+                for j in 0..n_coeffs {
+                    let idx = i * n_coeffs + j;
+                    xtw_x[idx] = xtw_x[idx] / (col_norms[i] * col_norms[j]);
+                }
+                xtw_y[i] = xtw_y[i] / col_norms[i];
+            }
 
-        // Solve
-        let beta = LinearSolver::solve_symmetric(&xtw_x, &xtw_y, n_coeffs);
+            // Solve
+            let beta = LinearSolver::solve_symmetric(&xtw_x, &xtw_y, n_coeffs);
 
-        if let Some(mut coeffs) = beta {
-            // Undo equilibration
-            for j in 0..n_coeffs {
-                coeffs[j] = coeffs[j] / col_norms[j];
+            if let Some(mut coeffs) = beta {
+                // Undo equilibration
+                for j in 0..n_coeffs {
+                    coeffs[j] = coeffs[j] / col_norms[j];
+                }
+                // Return coeffs padded/truncated to d+1 elements
+                let mut result = vec![T::zero(); d + 1];
+                for (i, &c) in coeffs.iter().take(d + 1).enumerate() {
+                    result[i] = c;
+                }
+                Some(result)
+            } else {
+                None
             }
-            // Return coeffs padded/truncated to d+1 elements
-            let mut result = vec![T::zero(); d + 1];
-            for (i, &c) in coeffs.iter().take(d + 1).enumerate() {
-                result[i] = c;
-            }
-            return Some(result);
+        };
+
+        self.buffer = buffer;
+        if result.is_some() {
+            return result;
         }
 
         // Fallback: return [mean, 0, 0, ...]

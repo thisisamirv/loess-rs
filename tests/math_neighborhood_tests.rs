@@ -2,7 +2,7 @@
 
 use loess_rs::internals::engine::executor::LoessDistanceCalculator;
 use loess_rs::internals::math::distance::DistanceMetric;
-use loess_rs::internals::math::neighborhood::KDTree;
+use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood, NeighborhoodSearchBuffer};
 
 #[test]
 fn test_kdtree_simple_2d() {
@@ -14,7 +14,11 @@ fn test_kdtree_simple_2d() {
         metric: DistanceMetric::Euclidean,
         scales: &[1.0, 1.0],
     };
-    let nbh = tree.find_k_nearest(&[0.2, 0.2], 2, &dist_calc, None);
+
+    let k = 2;
+    let mut buffer = NeighborhoodSearchBuffer::new(k);
+    let mut nbh = Neighborhood::with_capacity(k);
+    tree.find_k_nearest(&[0.2, 0.2], k, &dist_calc, None, &mut buffer, &mut nbh);
 
     assert_eq!(nbh.indices.len(), 2);
     assert_eq!(nbh.indices[0], 0); // (0,0) is closest
@@ -34,7 +38,11 @@ fn test_kdtree_normalized_distance() {
         metric: DistanceMetric::Normalized,
         scales: &scales,
     };
-    let nbh = tree.find_k_nearest(&[50.0, 0.0], 1, &dist_calc, None);
+
+    let k = 1;
+    let mut buffer = NeighborhoodSearchBuffer::new(k);
+    let mut nbh = Neighborhood::with_capacity(k);
+    tree.find_k_nearest(&[50.0, 0.0], k, &dist_calc, None, &mut buffer, &mut nbh);
 
     // With normalization, (50,0) is distance 0.5 from both (0,0) and (100,1)
     // Without normalization, (50,0) is much closer to (0,0) [dist=50] than (100,1) [dist=sqrt(50^2+1)]
@@ -50,7 +58,11 @@ fn test_kdtree_exclude_self() {
         metric: DistanceMetric::Euclidean,
         scales: &[1.0, 1.0],
     };
-    let nbh = tree.find_k_nearest(&[0.0, 0.0], 1, &dist_calc, Some(0));
+
+    let k = 1;
+    let mut buffer = NeighborhoodSearchBuffer::new(k);
+    let mut nbh = Neighborhood::with_capacity(k);
+    tree.find_k_nearest(&[0.0, 0.0], k, &dist_calc, Some(0), &mut buffer, &mut nbh);
 
     assert_eq!(nbh.indices.len(), 1);
     assert_eq!(nbh.indices[0], 1); // Should exclude point 0 and return point 1
@@ -69,10 +81,14 @@ fn test_kdtree_find_k_nearest_sorted_by_distance() {
         metric: DistanceMetric::Euclidean,
         scales: &scales,
     };
-    let result = tree.find_k_nearest(&query, 4, &dist_calc, None);
+
+    let k = 4;
+    let mut buffer = NeighborhoodSearchBuffer::new(k);
+    let mut result = Neighborhood::with_capacity(k);
+    tree.find_k_nearest(&query, k, &dist_calc, None, &mut buffer, &mut result);
 
     // Should be sorted by distance
-    for i in 1..result.len() {
+    for i in 1..result.distances.len() {
         assert!(result.distances[i] >= result.distances[i - 1]);
     }
 }
@@ -96,9 +112,13 @@ fn test_kdtree_find_k_nearest_3d() {
         metric: DistanceMetric::Euclidean,
         scales: &scales,
     };
-    let result = tree.find_k_nearest(&query, 2, &dist_calc, Some(0));
 
-    assert_eq!(result.len(), 2);
+    let k = 2;
+    let mut buffer = NeighborhoodSearchBuffer::new(k);
+    let mut result = Neighborhood::with_capacity(k);
+    tree.find_k_nearest(&query, k, &dist_calc, Some(0), &mut buffer, &mut result);
+
+    assert_eq!(result.indices.len(), 2);
     // Should be points 1 and 2 (distance 1 each)
     assert!(result.indices.contains(&1));
     assert!(result.indices.contains(&2));

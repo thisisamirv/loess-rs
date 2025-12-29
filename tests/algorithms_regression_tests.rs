@@ -23,7 +23,7 @@ use loess_rs::internals::algorithms::regression::{
 };
 use loess_rs::internals::math::distance::DistanceMetric;
 use loess_rs::internals::math::kernel::WeightFunction;
-use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood};
+use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood, NeighborhoodSearchBuffer};
 use loess_rs::internals::primitives::window::Window;
 use loess_rs::prelude::*;
 
@@ -594,7 +594,9 @@ fn test_weighted_mean_nd() {
         metric: DistanceMetric::Euclidean,
         scales: &scales,
     };
-    let neighborhood = tree.find_k_nearest(&query, 3, &dist_calc, None);
+    let mut buffer = NeighborhoodSearchBuffer::new(3);
+    let mut neighborhood = Neighborhood::with_capacity(3);
+    tree.find_k_nearest(&query, 3, &dist_calc, None, &mut buffer, &mut neighborhood);
 
     let mut context = RegressionContext {
         x: &x,
@@ -637,7 +639,9 @@ fn test_linear_fit_nd_2d() {
         metric: DistanceMetric::Euclidean,
         scales: &scales,
     };
-    let neighborhood = tree.find_k_nearest(&query, 4, &dist_calc, None);
+    let mut buffer = NeighborhoodSearchBuffer::new(4);
+    let mut neighborhood = Neighborhood::with_capacity(4);
+    tree.find_k_nearest(&query, 4, &dist_calc, None, &mut buffer, &mut neighborhood);
 
     // Create a robustness weights array matching size of x
     let robustness_weights = [1.0; 4];
