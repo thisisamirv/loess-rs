@@ -6,9 +6,17 @@
 
 // Modular dependencies
 use super::SolverLinalg;
-use super::accumulators::{
-    accumulate_1d_linear_scalar, accumulate_1d_linear_simd, accumulate_2d_linear_scalar,
+use super::accumulators_1d::{
+    accumulate_1d_cubic_scalar, accumulate_1d_cubic_simd, accumulate_1d_linear_scalar,
+    accumulate_1d_linear_simd, accumulate_1d_quadratic_scalar, accumulate_1d_quadratic_simd,
+};
+use super::accumulators_2d::{
+    accumulate_2d_cubic_scalar, accumulate_2d_cubic_simd, accumulate_2d_linear_scalar,
     accumulate_2d_linear_simd, accumulate_2d_quadratic_scalar, accumulate_2d_quadratic_simd,
+};
+use super::accumulators_3d::{
+    accumulate_3d_linear_scalar, accumulate_3d_linear_simd, accumulate_3d_quadratic_scalar,
+    accumulate_3d_quadratic_simd,
 };
 
 impl SolverLinalg for f64 {
@@ -112,6 +120,32 @@ impl SolverLinalg for f64 {
     }
 
     #[inline]
+    fn accumulate_1d_quadratic(
+        x: &[f64],
+        y: &[f64],
+        indices: &[usize],
+        weights: &[f64],
+        query: f64,
+        xtwx: &mut [f64; 9],
+        xtwy: &mut [f64; 3],
+    ) {
+        accumulate_1d_quadratic_simd(x, y, indices, weights, query, xtwx, xtwy)
+    }
+
+    fn accumulate_1d_cubic(
+        x: &[f64],
+        y: &[f64],
+        indices: &[usize],
+        weights: &[f64],
+        query: f64,
+        xtwx: &mut [f64; 16],
+        xtwy: &mut [f64; 4],
+    ) {
+        // cast to f64 slice since accumulators expect f64
+        accumulate_1d_cubic_simd(x, y, indices, weights, query, xtwx, xtwy)
+    }
+
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     fn accumulate_2d_linear(
         x: &[f64],
@@ -139,6 +173,51 @@ impl SolverLinalg for f64 {
         xtwy: &mut [f64; 6],
     ) {
         accumulate_2d_quadratic_simd(x, y, indices, weights, query_x, query_y, xtwx, xtwy)
+    }
+
+    fn accumulate_2d_cubic(
+        x: &[f64],
+        y: &[f64],
+        indices: &[usize],
+        weights: &[f64],
+        query_x: f64,
+        query_y: f64,
+        xtwx: &mut [f64; 100],
+        xtwy: &mut [f64; 10],
+    ) {
+        accumulate_2d_cubic_simd(x, y, indices, weights, query_x, query_y, xtwx, xtwy)
+    }
+
+    fn accumulate_3d_linear(
+        x: &[f64],
+        y: &[f64],
+        indices: &[usize],
+        weights: &[f64],
+        query_x: f64,
+        query_y: f64,
+        query_z: f64,
+        xtwx: &mut [f64; 16],
+        xtwy: &mut [f64; 4],
+    ) {
+        accumulate_3d_linear_simd(
+            x, y, indices, weights, query_x, query_y, query_z, xtwx, xtwy,
+        )
+    }
+
+    fn accumulate_3d_quadratic(
+        x: &[f64],
+        y: &[f64],
+        indices: &[usize],
+        weights: &[f64],
+        query_x: f64,
+        query_y: f64,
+        query_z: f64,
+        xtwx: &mut [f64; 100],
+        xtwy: &mut [f64; 10],
+    ) {
+        accumulate_3d_quadratic_simd(
+            x, y, indices, weights, query_x, query_y, query_z, xtwx, xtwy,
+        )
     }
 }
 
@@ -230,29 +309,56 @@ impl SolverLinalg for f32 {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn accumulate_1d_linear(
-        x: &[f32],
-        y: &[f32],
+        x: &[Self],
+        y: &[Self],
         indices: &[usize],
-        weights: &[f32],
-        query: f32,
-        xtwx: &mut [f32; 4],
-        xtwy: &mut [f32; 2],
+        weights: &[Self],
+        query: Self,
+        xtwx: &mut [Self; 4],
+        xtwy: &mut [Self; 2],
     ) {
         accumulate_1d_linear_scalar(x, y, indices, weights, query, xtwx, xtwy)
     }
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn accumulate_2d_linear(
+    fn accumulate_1d_quadratic(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query: Self,
+        xtwx: &mut [Self; 9],
+        xtwy: &mut [Self; 3],
+    ) {
+        accumulate_1d_quadratic_scalar(x, y, indices, weights, query, xtwx, xtwy)
+    }
+
+    fn accumulate_1d_cubic(
         x: &[f32],
         y: &[f32],
         indices: &[usize],
         weights: &[f32],
-        query_x: f32,
-        query_y: f32,
-        xtwx: &mut [f32; 9],
-        xtwy: &mut [f32; 3],
+        query: f32,
+        xtwx: &mut [f32; 16],
+        xtwy: &mut [f32; 4],
+    ) {
+        accumulate_1d_cubic_scalar(x, y, indices, weights, query, xtwx, xtwy)
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_2d_linear(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query_x: Self,
+        query_y: Self,
+        xtwx: &mut [Self; 9],
+        xtwy: &mut [Self; 3],
     ) {
         accumulate_2d_linear_scalar(x, y, indices, weights, query_x, query_y, xtwx, xtwy)
     }
@@ -260,15 +366,60 @@ impl SolverLinalg for f32 {
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn accumulate_2d_quadratic(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query_x: Self,
+        query_y: Self,
+        xtwx: &mut [Self; 36],
+        xtwy: &mut [Self; 6],
+    ) {
+        accumulate_2d_quadratic_scalar(x, y, indices, weights, query_x, query_y, xtwx, xtwy)
+    }
+
+    fn accumulate_2d_cubic(
         x: &[f32],
         y: &[f32],
         indices: &[usize],
         weights: &[f32],
         query_x: f32,
         query_y: f32,
-        xtwx: &mut [f32; 36],
-        xtwy: &mut [f32; 6],
+        xtwx: &mut [f32; 100],
+        xtwy: &mut [f32; 10],
     ) {
-        accumulate_2d_quadratic_scalar(x, y, indices, weights, query_x, query_y, xtwx, xtwy)
+        accumulate_2d_cubic_scalar(x, y, indices, weights, query_x, query_y, xtwx, xtwy)
+    }
+
+    fn accumulate_3d_linear(
+        x: &[f32],
+        y: &[f32],
+        indices: &[usize],
+        weights: &[f32],
+        query_x: f32,
+        query_y: f32,
+        query_z: f32,
+        xtwx: &mut [f32; 16],
+        xtwy: &mut [f32; 4],
+    ) {
+        accumulate_3d_linear_scalar(
+            x, y, indices, weights, query_x, query_y, query_z, xtwx, xtwy,
+        )
+    }
+
+    fn accumulate_3d_quadratic(
+        x: &[f32],
+        y: &[f32],
+        indices: &[usize],
+        weights: &[f32],
+        query_x: f32,
+        query_y: f32,
+        query_z: f32,
+        xtwx: &mut [f32; 100],
+        xtwy: &mut [f32; 10],
+    ) {
+        accumulate_3d_quadratic_scalar(
+            x, y, indices, weights, query_x, query_y, query_z, xtwx, xtwy,
+        )
     }
 }

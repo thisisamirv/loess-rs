@@ -8,8 +8,14 @@
 // External dependencies
 use num_traits::Float;
 
-/// Accumulators for specialized solvers.
-pub mod accumulators;
+/// Specialized 1D accumulators
+pub mod accumulators_1d;
+
+/// Specialized 2D accumulators
+pub mod accumulators_2d;
+
+/// Specialized 3D accumulators
+pub mod accumulators_3d;
 
 /// Implementations of specialized solvers.
 pub mod impls;
@@ -41,6 +47,28 @@ pub trait SolverLinalg: Float + 'static {
         xtwy: &mut [Self; 2],
     );
 
+    /// Accumulate Normal Equations for 1D Quadratic Case.
+    fn accumulate_1d_quadratic(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query: Self,
+        xtwx: &mut [Self; 9],
+        xtwy: &mut [Self; 3],
+    );
+
+    /// Accumulate Normal Equations for 1D Cubic Case.
+    fn accumulate_1d_cubic(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query: Self,
+        xtwx: &mut [Self; 16],
+        xtwy: &mut [Self; 4],
+    );
+
     /// Accumulate Normal Equations for 2D Linear Case.
     #[allow(clippy::too_many_arguments)]
     fn accumulate_2d_linear(
@@ -65,5 +93,46 @@ pub trait SolverLinalg: Float + 'static {
         query_y: Self,
         xtwx: &mut [Self; 36],
         xtwy: &mut [Self; 6],
+    );
+
+    /// Accumulate Normal Equations for 2D Cubic Case.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_2d_cubic(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query_x: Self,
+        query_y: Self,
+        xtwx: &mut [Self; 100],
+        xtwy: &mut [Self; 10],
+    );
+
+    /// Accumulate Normal Equations for 3D Linear Case.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_3d_linear(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query_x: Self,
+        query_y: Self,
+        query_z: Self,
+        xtwx: &mut [Self; 16],
+        xtwy: &mut [Self; 4],
+    );
+
+    /// Accumulate Normal Equations for 3D Quadratic Case.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_3d_quadratic(
+        x: &[Self],
+        y: &[Self],
+        indices: &[usize],
+        weights: &[Self],
+        query_x: Self,
+        query_y: Self,
+        query_z: Self,
+        xtwx: &mut [Self; 100],
+        xtwy: &mut [Self; 10],
     );
 }
