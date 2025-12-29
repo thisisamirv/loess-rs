@@ -732,7 +732,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                     compute_leverage: false,
                     buffer: None,
                 };
-                context.fit().map(|(val, _)| val)
+                context.fit_with_coefficients()
             };
 
             let surface = InterpolationSurface::build(
@@ -859,7 +859,7 @@ impl<T: Float + Debug + Send + Sync + 'static> LoessExecutor<T> {
                                 compute_leverage: false,
                                 buffer: None,
                             };
-                            context.fit().map(|(val, _)| val)
+                            context.fit_with_coefficients()
                         };
 
                         surface.refit_values(&ay, &kdtree, window_size, &dist_calc, fitter);

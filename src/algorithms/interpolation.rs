@@ -68,8 +68,9 @@ pub struct SurfaceCell<T: Float> {
 /// 3. Interpolating within cells using n-linear interpolation
 #[derive(Debug, Clone)]
 pub struct InterpolationSurface<T: Float> {
-    /// Fitted values at each vertex (the y0 coefficient).
-    pub vertex_values: Vec<T>,
+    /// Fitted data at each vertex: [val, ∂/∂x₁, ∂/∂x₂, ...] for each vertex.
+    /// Layout: vertex 0 data, vertex 1 data, ... with (d+1) values per vertex.
+    pub vertex_data: Vec<T>,
     /// Vertex coordinates (stored for refitting).
     pub vertices: Vec<Vec<T>>,
     /// Spatial cells for lookup.
@@ -100,7 +101,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     ) -> Self
     where
         D: PointDistance<T>,
-        F: Fn(&[T], &Neighborhood<T>) -> Option<T>,
+        F: Fn(&[T], &Neighborhood<T>) -> Option<Vec<T>>,
     {
         let n = x.len() / dimensions;
 
@@ -190,32 +191,40 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             fd, // min cell diameter (0 = disabled)
         );
 
-        // Fit at each vertex
-        let mut vertex_values = vec![T::zero(); vertices.len()];
+        // Fit at each vertex - store value + d partial derivatives
+        // Layout: [v0_val, v0_dx1, ..., v0_dxd, v1_val, v1_dx1, ..., v1_dxd, ...]
+        let stride = dimensions + 1; // d+1 values per vertex
+        let mut vertex_data = vec![T::zero(); vertices.len() * stride];
 
         for (v_idx, vertex) in vertices.iter().enumerate() {
             // Find neighbors for this vertex
             let neighborhood = kdtree.find_k_nearest(vertex, window_size, dist_calc, None);
 
+            let base_idx = v_idx * stride;
+
             if neighborhood.is_empty() {
-                // Fallback: use mean of all y values
+                // Fallback: use mean of all y values, zero derivatives
                 let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                vertex_values[v_idx] = mean;
+                vertex_data[base_idx] = mean;
+                // Derivatives remain zero
                 continue;
             }
 
             // Fit local regression at this vertex using injected fitter
-            if let Some(val) = fitter(vertex, &neighborhood) {
-                vertex_values[v_idx] = val;
+            // Returns [value, d/dx1, d/dx2, ..., d/dxd]
+            if let Some(coeffs) = fitter(vertex, &neighborhood) {
+                for (i, &c) in coeffs.iter().take(stride).enumerate() {
+                    vertex_data[base_idx + i] = c;
+                }
             } else {
-                // Fallback to mean
+                // Fallback to mean, zero derivatives
                 let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                vertex_values[v_idx] = mean;
+                vertex_data[base_idx] = mean;
             }
         }
 
         Self {
-            vertex_values,
+            vertex_data,
             vertices,
             cells,
             root: 0,
@@ -236,28 +245,39 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         fitter: F,
     ) where
         D: PointDistance<T>,
-        F: Fn(&[T], &Neighborhood<T>) -> Option<T>,
+        F: Fn(&[T], &Neighborhood<T>) -> Option<Vec<T>>,
     {
         let n = y.len() / self.dimensions;
+        let stride = self.dimensions + 1; // d+1 values per vertex
 
         for (v_idx, vertex) in self.vertices.iter().enumerate() {
             // Find neighbors for this vertex
             let neighborhood = kdtree.find_k_nearest(vertex, window_size, dist_calc, None);
 
+            let base_idx = v_idx * stride;
+
             if neighborhood.is_empty() {
-                // Fallback: use mean of all y values
+                // Fallback: use mean of all y values, zero derivatives
                 let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                self.vertex_values[v_idx] = mean;
+                self.vertex_data[base_idx] = mean;
+                for i in 1..stride {
+                    self.vertex_data[base_idx + i] = T::zero();
+                }
                 continue;
             }
 
             // Fit local regression at this vertex using injected fitter
-            if let Some(val) = fitter(vertex, &neighborhood) {
-                self.vertex_values[v_idx] = val;
+            if let Some(coeffs) = fitter(vertex, &neighborhood) {
+                for (i, &c) in coeffs.iter().take(stride).enumerate() {
+                    self.vertex_data[base_idx + i] = c;
+                }
             } else {
-                // Fallback to mean
+                // Fallback to mean, zero derivatives
                 let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                self.vertex_values[v_idx] = mean;
+                self.vertex_data[base_idx] = mean;
+                for i in 1..stride {
+                    self.vertex_data[base_idx + i] = T::zero();
+                }
             }
         }
     }
@@ -547,93 +567,169 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         }
     }
 
-    /// Cubic Hermite blending function (smoothstep).
-    /// Maps [0, 1] to [0, 1] with zero derivative at endpoints.
-    /// f(t) = 3t^2 - 2t^3
-    fn smoothstep(t: T) -> T {
-        let three = T::from(3.0).unwrap();
+    /// Hermite basis functions as used in scikit-misc ehg128.
+    #[inline]
+    fn hermite_phi0(h: T) -> T {
+        // (1-h)^2 * (1+2h)
+        let one = T::one();
         let two = T::from(2.0).unwrap();
-        t * t * (three - two * t)
+        (one - h) * (one - h) * (one + two * h)
     }
 
-    /// Perform multilinear interpolation within a cell.
+    #[inline]
+    fn hermite_phi1(h: T) -> T {
+        // h^2 * (3-2h)
+        let two = T::from(2.0).unwrap();
+        let three = T::from(3.0).unwrap();
+        h * h * (three - two * h)
+    }
+
+    #[inline]
+    fn hermite_psi0(h: T) -> T {
+        // h * (1-h)^2
+        let one = T::one();
+        h * (one - h) * (one - h)
+    }
+
+    #[inline]
+    fn hermite_psi1(h: T) -> T {
+        // h^2 * (h-1)
+        let one = T::one();
+        h * h * (h - one)
+    }
+
+    /// Perform Hermite interpolation within a cell using value + derivatives.
+    /// Matches scikit-misc's ehg128 algorithm.
     fn interpolate_in_cell(&self, cell: &SurfaceCell<T>, query: &[T]) -> T {
         let d = self.dimensions;
+        let stride = d + 1; // d+1 values per vertex: [value, d/dx1, d/dx2, ..., d/dxd]
 
-        // Optimization: Use a stack-allocated buffer for common low-dimensional cases
-        let mut weights_stack = [T::zero(); 16];
-        let mut weights_heap = Vec::new();
+        // Get vertex indices for lower and upper corners
+        // In a 1D case: vertex 0 is lower, vertex 1 is upper
+        // In nD: we use tensor interpolation dimension by dimension
 
-        if d <= 16 {
-            for (dim, item) in query.iter().enumerate().take(d) {
-                let range = cell.upper[dim] - cell.lower[dim];
-                if range > T::epsilon() {
-                    let t = (*item - cell.lower[dim]) / range;
-                    let t_clamped = t.max(T::zero()).min(T::one());
-                    weights_stack[dim] = Self::smoothstep(t_clamped);
-                } else {
-                    weights_stack[dim] = T::zero();
-                }
-            }
-        } else {
-            weights_heap.reserve(d);
-            for (dim, item) in query.iter().enumerate().take(d) {
-                let range = cell.upper[dim] - cell.lower[dim];
-                if range > T::epsilon() {
-                    let t = (*item - cell.lower[dim]) / range;
-                    let t_clamped = t.max(T::zero()).min(T::one());
-                    weights_heap.push(Self::smoothstep(t_clamped));
-                } else {
-                    weights_heap.push(T::zero());
-                }
-            }
-        };
-
-        let weights: &[T] = if d <= 16 {
-            &weights_stack[..d]
-        } else {
-            &weights_heap
-        };
-
-        // Multilinear interpolation: weighted sum over all 2^d corners
-        let num_corners = 1usize << d;
-        let mut result = T::zero();
-        let mut total_weight = T::zero();
-
-        for corner_idx in 0..num_corners {
-            // Compute weight for this corner
-            let mut corner_weight = T::one();
-            for (dim, weight) in weights.iter().enumerate().take(d) {
-                let is_upper = (corner_idx >> dim) & 1 == 1;
-                if is_upper {
-                    corner_weight = corner_weight * *weight;
-                } else {
-                    corner_weight = corner_weight * (T::one() - *weight);
-                }
+        // For simplicity in 1D case (most common in LOESS)
+        if d == 1 {
+            // Get two vertices
+            if cell.vertex_indices.len() < 2 {
+                // Fallback to weighted average
+                return self.fallback_interpolation(cell);
             }
 
-            // Find the vertex for this corner pattern
-            // We need to match the corner pattern to the vertex in the cell
-            if corner_idx < cell.vertex_indices.len() {
-                let vertex_idx = cell.vertex_indices[corner_idx];
-                if vertex_idx < self.vertex_values.len() {
-                    result = result + corner_weight * self.vertex_values[vertex_idx];
-                    total_weight = total_weight + corner_weight;
-                }
+            let v0_idx = cell.vertex_indices[0];
+            let v1_idx = cell.vertex_indices[1];
+
+            // Get vertex data: [value, derivative]
+            let g0_val = self.vertex_data[v0_idx * stride];
+            let g0_deriv = self.vertex_data[v0_idx * stride + 1];
+            let g1_val = self.vertex_data[v1_idx * stride];
+            let g1_deriv = self.vertex_data[v1_idx * stride + 1];
+
+            // Compute h = normalized position in cell
+            let range = cell.upper[0] - cell.lower[0];
+            if range <= T::epsilon() {
+                return g0_val;
             }
+            let h = (query[0] - cell.lower[0]) / range;
+            let h = h.max(T::zero()).min(T::one());
+
+            // Hermite basis functions
+            let phi0 = Self::hermite_phi0(h);
+            let phi1 = Self::hermite_phi1(h);
+            let psi0 = Self::hermite_psi0(h);
+            let psi1 = Self::hermite_psi1(h);
+
+            // Hermite interpolation matching scikit-misc:
+            // result = phi0*g0_val + phi1*g1_val + (psi0*g0_deriv + psi1*g1_deriv) * range
+            return phi0 * g0_val + phi1 * g1_val + (psi0 * g0_deriv + psi1 * g1_deriv) * range;
         }
 
-        if total_weight > T::epsilon() {
-            result / total_weight
-        } else {
-            // Fallback: average of all vertex values in cell
-            let sum: T = cell
-                .vertex_indices
-                .iter()
-                .filter_map(|&idx| self.vertex_values.get(idx).copied())
-                .fold(T::zero(), |a, b| a + b);
-            let count = T::from(cell.vertex_indices.len()).unwrap();
+        // For higher dimensions, use tensor Hermite interpolation
+        // This is more complex - scikit-misc uses recursive tensor product
+        // For now, fallback to multilinear for nD (can be enhanced later)
+        self.hermite_tensor_interpolation(cell, query)
+    }
+
+    /// Fallback interpolation when cell has insufficient vertices.
+    fn fallback_interpolation(&self, cell: &SurfaceCell<T>) -> T {
+        let stride = self.dimensions + 1;
+        let sum: T = cell
+            .vertex_indices
+            .iter()
+            .filter_map(|&idx| {
+                let base = idx * stride;
+                self.vertex_data.get(base).copied()
+            })
+            .fold(T::zero(), |a, b| a + b);
+        let count = T::from(cell.vertex_indices.len()).unwrap();
+        if count > T::zero() {
             sum / count
+        } else {
+            T::zero()
         }
+    }
+
+    /// Tensor Hermite interpolation for nD case.
+    /// Uses dimension-by-dimension interpolation like scikit-misc.
+    fn hermite_tensor_interpolation(&self, cell: &SurfaceCell<T>, query: &[T]) -> T {
+        let d = self.dimensions;
+        let stride = d + 1;
+        let num_corners = 1usize << d;
+
+        // Get all corner data
+        let mut g: Vec<Vec<T>> = Vec::with_capacity(num_corners);
+        for &v_idx in &cell.vertex_indices {
+            let base = v_idx * stride;
+            let data: Vec<T> = (0..stride)
+                .filter_map(|i| self.vertex_data.get(base + i).copied())
+                .collect();
+            if data.len() == stride {
+                g.push(data);
+            } else {
+                // Fallback for missing data
+                let mut default = vec![T::zero(); stride];
+                default[0] = self.vertex_data.get(base).copied().unwrap_or(T::zero());
+                g.push(default);
+            }
+        }
+
+        // Ensure we have 2^d corners
+        while g.len() < num_corners {
+            g.push(vec![T::zero(); stride]);
+        }
+
+        // Tensor interpolation: process dimension by dimension
+        let mut lg = num_corners;
+
+        for dim in (0..d).rev() {
+            let range = cell.upper[dim] - cell.lower[dim];
+            let h = if range > T::epsilon() {
+                let t = (query[dim] - cell.lower[dim]) / range;
+                t.max(T::zero()).min(T::one())
+            } else {
+                T::zero()
+            };
+
+            let phi0 = Self::hermite_phi0(h);
+            let phi1 = Self::hermite_phi1(h);
+            let psi0 = Self::hermite_psi0(h);
+            let psi1 = Self::hermite_psi1(h);
+
+            lg /= 2;
+            let (lower, upper) = g.split_at_mut(lg);
+            for (row_curr, row_next) in lower.iter_mut().zip(upper.iter()) {
+                // Value interpolation with derivative terms
+                row_curr[0] = phi0 * row_curr[0]
+                    + phi1 * row_next[0]
+                    + (psi0 * row_curr[dim + 1] + psi1 * row_next[dim + 1]) * range;
+
+                // Interpolate partial derivatives for remaining dimensions
+                for (val, &next_val) in row_curr.iter_mut().zip(row_next.iter()).skip(1).take(dim) {
+                    *val = phi0 * *val + phi1 * next_val;
+                }
+            }
+        }
+
+        g[0][0]
     }
 }

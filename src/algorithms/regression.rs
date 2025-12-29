@@ -487,12 +487,12 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
             for i in 0..n_neighbors {
                 let neighbor_idx = self.neighborhood.indices[i];
                 let dist = self.neighborhood.distances[i];
-                let u = dist / max_distance;
+                let u = (dist / max_distance).sqrt();
                 let kernel_w = self.weight_function.compute_weight(u);
                 let w = if self.use_robustness {
-                    kernel_w * self.robustness_weights[neighbor_idx]
+                    (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
                 } else {
-                    kernel_w
+                    kernel_w.sqrt()
                 };
                 weights.push(w);
             }
@@ -519,12 +519,12 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
             for i in 0..n_neighbors {
                 let neighbor_idx = self.neighborhood.indices[i];
                 let dist = self.neighborhood.distances[i];
-                let u = dist / max_distance;
+                let u = (dist / max_distance).sqrt();
                 let kernel_w = self.weight_function.compute_weight(u);
                 let w = if self.use_robustness {
-                    kernel_w * self.robustness_weights[neighbor_idx]
+                    (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
                 } else {
-                    kernel_w
+                    kernel_w.sqrt()
                 };
                 weights.push(w);
             }
@@ -549,6 +549,133 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
         };
         self.buffer = buffer;
         result
+    }
+
+    /// Returns all polynomial coefficients [value, d/dx1, d/dx2, ..., d/dxd] at the query point.
+    /// Used for Hermite interpolation which requires derivatives.
+    pub fn fit_with_coefficients(&mut self) -> Option<Vec<T>> {
+        let n_neighbors = self.neighborhood.len();
+        if n_neighbors == 0 {
+            return None;
+        }
+
+        let d = self.dimensions;
+        let n_coeffs = self.polynomial_degree.num_coefficients_nd(d);
+        let max_distance = self.neighborhood.max_distance;
+
+        // Handle zero bandwidth or constant degree - return [value, 0, 0, ...]
+        if max_distance <= T::epsilon() || self.polynomial_degree == PolynomialDegree::Constant {
+            let (val, _) = self.weighted_mean_and_sum();
+            let mut coeffs = vec![T::zero(); d + 1];
+            coeffs[0] = val;
+            return Some(coeffs);
+        }
+
+        let query_point = if let Some(qp) = self.query_point {
+            qp
+        } else {
+            let query_offset = self.query_idx * d;
+            &self.x[query_offset..query_offset + d]
+        };
+
+        // Build normal equations and solve
+        let mut xtw_x = vec![T::zero(); n_coeffs * n_coeffs];
+        let mut xtw_y = vec![T::zero(); n_coeffs];
+
+        // Compute weights
+        let mut weights = Vec::with_capacity(n_neighbors);
+        for i in 0..n_neighbors {
+            let neighbor_idx = self.neighborhood.indices[i];
+            let dist = self.neighborhood.distances[i];
+            let u = (dist / max_distance).sqrt();
+            let kernel_w = self.weight_function.compute_weight(u);
+            let w = if self.use_robustness {
+                (kernel_w * self.robustness_weights[neighbor_idx]).sqrt()
+            } else {
+                kernel_w.sqrt()
+            };
+            weights.push(w);
+        }
+
+        // Accumulate normal equations based on polynomial degree and dimensions
+        match (self.dimensions, self.polynomial_degree) {
+            (1, PolynomialDegree::Linear) => {
+                self.accumulate_normal_equations(
+                    &weights,
+                    Linear1DTermGenerator,
+                    query_point,
+                    &mut xtw_x,
+                    &mut xtw_y,
+                );
+            }
+            (2, PolynomialDegree::Linear) => {
+                self.accumulate_normal_equations(
+                    &weights,
+                    Linear2DTermGenerator,
+                    query_point,
+                    &mut xtw_x,
+                    &mut xtw_y,
+                );
+            }
+            (3, PolynomialDegree::Linear) => {
+                self.accumulate_normal_equations(
+                    &weights,
+                    Linear3DTermGenerator,
+                    query_point,
+                    &mut xtw_x,
+                    &mut xtw_y,
+                );
+            }
+            _ => {
+                let term_gen =
+                    GenericTermGenerator::new(self.polynomial_degree, self.dimensions, n_coeffs);
+                self.accumulate_normal_equations(
+                    &weights,
+                    term_gen,
+                    query_point,
+                    &mut xtw_x,
+                    &mut xtw_y,
+                );
+            }
+        }
+
+        // Column equilibration
+        let mut col_norms = vec![T::one(); n_coeffs];
+        for j in 0..n_coeffs {
+            let diag = xtw_x[j * n_coeffs + j];
+            if diag > T::epsilon() {
+                col_norms[j] = diag.sqrt();
+            }
+        }
+        for i in 0..n_coeffs {
+            for j in 0..n_coeffs {
+                let idx = i * n_coeffs + j;
+                xtw_x[idx] = xtw_x[idx] / (col_norms[i] * col_norms[j]);
+            }
+            xtw_y[i] = xtw_y[i] / col_norms[i];
+        }
+
+        // Solve
+        let beta = LinearSolver::solve_symmetric(&xtw_x, &xtw_y, n_coeffs);
+
+        if let Some(mut coeffs) = beta {
+            // Undo equilibration
+            for j in 0..n_coeffs {
+                coeffs[j] = coeffs[j] / col_norms[j];
+            }
+            // Return coeffs padded/truncated to d+1 elements
+            let mut result = vec![T::zero(); d + 1];
+            for (i, &c) in coeffs.iter().take(d + 1).enumerate() {
+                result[i] = c;
+            }
+            return Some(result);
+        }
+
+        // Fallback: return [mean, 0, 0, ...]
+        let (val, _) = self.weighted_mean_and_sum();
+        let mut coeffs = vec![T::zero(); d + 1];
+        coeffs[0] = val;
+        Some(coeffs)
     }
 
     /// Handle zero weight cases using fallback policy.
@@ -589,13 +716,13 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
             let idx = self.neighborhood.indices[i];
             let dist = self.neighborhood.distances[i];
 
-            let u = dist / bandwidth;
+            let u = (dist / bandwidth).sqrt();
             let kernel_w = self.weight_function.compute_weight(u);
 
             let w = if self.use_robustness {
-                kernel_w * self.robustness_weights[idx]
+                (kernel_w * self.robustness_weights[idx]).sqrt()
             } else {
-                kernel_w
+                kernel_w.sqrt()
             };
 
             sum_wy = sum_wy + w * self.y[idx];
@@ -698,10 +825,34 @@ impl<'a, T: Float + 'static> RegressionContext<'a, T> {
             }
         }
 
-        // 2. Solve the System using generic solver
+        // 2. Column equilibration (normalize each column to unit norm)
+        // For normal equations, we scale by sqrt(diagonal) to balance the matrix
+        let mut col_norms = vec![T::one(); n_coeffs];
+        for j in 0..n_coeffs {
+            let diag = xtw_x[j * n_coeffs + j];
+            if diag > T::epsilon() {
+                col_norms[j] = diag.sqrt();
+            }
+        }
+
+        // Apply equilibration: scale rows and columns of X'WX
+        for i in 0..n_coeffs {
+            for j in 0..n_coeffs {
+                let idx = i * n_coeffs + j;
+                xtw_x[idx] = xtw_x[idx] / (col_norms[i] * col_norms[j]);
+            }
+            // Also scale X'Wy
+            xtw_y[i] = xtw_y[i] / col_norms[i];
+        }
+
+        // 3. Solve the equilibrated system
         let beta = LinearSolver::solve_symmetric(xtw_x, xtw_y, n_coeffs);
 
-        if let Some(coeffs) = beta {
+        if let Some(mut coeffs) = beta {
+            // Undo equilibration on the solution
+            for j in 0..n_coeffs {
+                coeffs[j] = coeffs[j] / col_norms[j];
+            }
             let leverage = if self.compute_leverage {
                 // Solve A * x = e1 to get (A^-1)_00
                 // Simply solve against [1, 0, ... 0]

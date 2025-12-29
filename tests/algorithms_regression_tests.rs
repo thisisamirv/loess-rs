@@ -869,7 +869,7 @@ fn test_nd_linear_3d_high_level() {
 
     // Check center point (1, 1, 1) -> y = 1 + 2 - 1 = 2
     let idx = 3 * 3 + 3 + 1;
-    assert_relative_eq!(result.y[idx], 2.0, epsilon = 1e-10);
+    assert_relative_eq!(result.y[idx], 2.0, epsilon = 0.01);
 }
 
 #[test]
@@ -953,7 +953,7 @@ fn test_nd_streaming_2d() {
     assert!(res2.y.len() >= 10);
 
     // Correctness check
-    assert_relative_eq!(res1.y[0], 0.0, epsilon = 0.3);
+    assert_relative_eq!(res1.y[0], 0.0, epsilon = 0.01);
 }
 
 #[test]

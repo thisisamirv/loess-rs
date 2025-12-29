@@ -47,14 +47,15 @@ fn test_build_simple_1d() {
     let dist_calc = create_mock_dist_calc();
 
     // Simple fitter that just returns the x-coordinate (identity)
-    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<f64> { Some(vertex[0]) };
+    let fitter =
+        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
         &x, &y, dimensions, fraction, 2, &dist_calc, &kdtree, 10, // Max vertices
         fitter, 0.2,
     );
 
-    assert!(surface.vertex_values.len() >= 2);
+    assert!(surface.vertex_data.len() >= 4); // At least 2 vertices * 2 values each
     // Determine min/max from input to check bounds
     let min_x = 0.0;
     let max_x = 4.0;
@@ -83,15 +84,16 @@ fn test_build_simple_2d() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
 
-    let fitter =
-        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<f64> { Some(vertex[0] + vertex[1]) };
+    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> {
+        Some(vec![vertex[0] + vertex[1], 1.0, 1.0])
+    };
 
     let surface = InterpolationSurface::build(
         &x, &y, dimensions, fraction, 4, &dist_calc, &kdtree, 20, fitter, 0.2,
     );
 
     // Initial cell has 4 vertices (2^2)
-    assert!(surface.vertex_values.len() >= 4);
+    assert!(surface.vertex_data.len() >= 12); // At least 4 vertices * 3 values each
 }
 
 // ============================================================================
@@ -109,7 +111,8 @@ fn test_interpolate_1d_linear() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<f64> { Some(vertex[0]) };
+    let fitter =
+        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
         &x, &y, dimensions, 0.5, 1, &dist_calc, &kdtree, 10, fitter, 0.2,
@@ -134,8 +137,8 @@ fn test_interpolate_2d_bilinear() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<f64> {
-        Some(2.0 * vertex[0] + 3.0 * vertex[1] + 1.0)
+    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> {
+        Some(vec![2.0 * vertex[0] + 3.0 * vertex[1] + 1.0, 2.0, 3.0])
     };
 
     let surface = InterpolationSurface::build(
@@ -168,8 +171,9 @@ fn test_adaptive_subdivision() {
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
     // Fitter returns x^2
-    let fitter =
-        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<f64> { Some(vertex[0] * vertex[0]) };
+    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> {
+        Some(vec![vertex[0] * vertex[0], 2.0 * vertex[0]])
+    };
 
     let surface = InterpolationSurface::build(
         &x, &y, dimensions, 0.3, 6, &dist_calc, &kdtree,
@@ -178,7 +182,7 @@ fn test_adaptive_subdivision() {
     );
 
     // Should have more than just the initial 2 vertices
-    assert!(surface.vertex_values.len() > 2);
+    assert!(surface.vertex_data.len() > 4); // More than 2 vertices * 2 values each
     // Should have created child cells
     assert!(surface.cells.len() > 1);
 }
@@ -198,7 +202,8 @@ fn test_interpolate_boundary_clamping() {
 
     let kdtree = KDTree::new(&x, dimensions);
     let dist_calc = create_mock_dist_calc();
-    let fitter = |vertex: &[f64], _: &Neighborhood<f64>| -> Option<f64> { Some(vertex[0]) };
+    let fitter =
+        |vertex: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
         &x, &y, dimensions, 0.5, 1, &dist_calc, &kdtree, 10, fitter, 0.2,
@@ -225,7 +230,7 @@ fn test_fitter_fallback() {
     let dist_calc = create_mock_dist_calc();
 
     // Broken fitter always returns None
-    let fitter = |_: &[f64], _: &Neighborhood<f64>| -> Option<f64> { None };
+    let fitter = |_: &[f64], _: &Neighborhood<f64>| -> Option<Vec<f64>> { None };
 
     let surface = InterpolationSurface::build(
         &x, &y, dimensions, 0.5, 1, &dist_calc, &kdtree, 10, fitter, 0.2,

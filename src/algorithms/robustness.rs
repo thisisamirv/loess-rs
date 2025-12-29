@@ -171,9 +171,11 @@ impl RobustnessMethod {
     ///
     /// u = |r| / (c * s)
     ///
-    /// w(u) = (1 - u^2)^2  if u < 1
+    /// w(u) = (1 - u^2)^2  if 0.001 < u < 0.999
     ///
-    /// w(u) = 0          if u >= 1
+    /// w(u) = 1            if u <= 0.001
+    ///
+    /// w(u) = 0            if u >= 0.999
     #[inline]
     fn bisquare_weight<T: Float>(residual: T, scale: T, c: T) -> T {
         if scale <= T::zero() {
@@ -181,13 +183,19 @@ impl RobustnessMethod {
         }
 
         let min_eps = T::from(Self::MIN_TUNED_SCALE).unwrap();
-        // Ensure c is at least min_eps so tuned_scale isn't zero
         let c_clamped = c.max(min_eps);
         let tuned_scale = (scale * c_clamped).max(min_eps);
 
         let u = (residual / tuned_scale).abs();
-        if u >= T::one() {
+
+        // Thresholds matching scikit-misc (0.001 and 0.999)
+        let low_threshold = T::from(0.001).unwrap();
+        let high_threshold = T::from(0.999).unwrap();
+
+        if u >= high_threshold {
             T::zero()
+        } else if u <= low_threshold {
+            T::one()
         } else {
             let tmp = T::one() - u * u;
             tmp * tmp
