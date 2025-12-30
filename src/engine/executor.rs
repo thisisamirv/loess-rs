@@ -796,8 +796,6 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             .resize(n_total, T::one());
         workspace.executor_buffer.residuals.resize(n, T::zero());
 
-        let mut iterations_performed = 0;
-
         // For interpolation mode: build surface once before iterations
         let mut _surface_opt: Option<InterpolationSurface<T>> = None;
         if self.surface_mode == SurfaceMode::Interpolation {
@@ -870,9 +868,11 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             );
         }
 
+        let mut iterations_performed = 1;
+
         // Robustness iteration loop
-        for iter in 1..=target_iterations {
-            iterations_performed = iter;
+        for iter in 1..target_iterations {
+            iterations_performed = iter + 1;
 
             // Update robustness weights based on residuals from previous pass
             T::batch_abs_residuals(
@@ -1224,7 +1224,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 dims,
                 y_context,
                 i,
-                Some(query_point), // Pass explicit query point
+                Some(query_point),
                 neighborhood,
                 use_robustness,
                 robustness_weights,
