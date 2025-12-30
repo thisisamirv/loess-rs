@@ -293,7 +293,8 @@ impl<T: Float> KDTree<T> {
         let heap = &mut buffer.heap;
         let stack = &mut buffer.stack;
 
-        // Track max distance
+        // Cache heap state to avoid repeated len() checks
+        let mut heap_full = false;
         let mut max_dist = T::infinity();
 
         stack.push(self.root);
@@ -307,18 +308,19 @@ impl<T: Float> KDTree<T> {
                 let node_point = &self.points[offset..offset + d];
                 let dist = dist_calc.distance(query, node_point);
 
-                if heap.len() < k {
+                if !heap_full {
                     heap.push(NodeDistance(node.index, dist));
                     if heap.len() == k {
-                        // Heap is now full, cache the max distance
+                        heap_full = true;
                         max_dist = heap.peek().map(|nd| nd.1).unwrap_or(T::infinity());
                     }
                 } else if dist < max_dist {
-                    // Replace the worst neighbor
+                    // Replace the worst neighbor - PeekMut sifts down on drop
                     if let Some(mut top) = heap.peek_mut() {
                         *top = NodeDistance(node.index, dist);
+                        // After drop, the new max is at the top
                     }
-                    // Update cached max distance
+                    // Must re-peek after sift-down to get actual new max
                     max_dist = heap.peek().map(|nd| nd.1).unwrap_or(T::infinity());
                 }
             }
@@ -339,7 +341,7 @@ impl<T: Float> KDTree<T> {
                 let dist_to_plane =
                     dist_calc.split_distance(split_dim, node.split_val, query[split_dim]);
                 // Only explore far if heap is not full OR plane is closer than worst neighbor
-                if heap.len() < k || dist_to_plane < max_dist {
+                if !heap_full || dist_to_plane < max_dist {
                     stack.push(far);
                 }
             }
