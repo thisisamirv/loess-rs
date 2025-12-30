@@ -66,7 +66,9 @@ use crate::math::linalg::FloatLinalg;
 use crate::math::neighborhood::{KDTree, Neighborhood, NodeDistance, PointDistance};
 use crate::math::scaling::ScalingMethod;
 use crate::primitives::backend::Backend;
-use crate::primitives::buffer::{FittingBuffer, LoessBuffer, NeighborhoodSearchBuffer};
+use crate::primitives::buffer::{
+    CachedNeighborhood, FittingBuffer, LoessBuffer, NeighborhoodSearchBuffer,
+};
 use crate::primitives::window::Window;
 
 /// Standard LOESS distance calculator.
@@ -846,7 +848,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 *val = surface.evaluate(query_point);
             }
         } else {
-            // Direct mode: initial fit
+            // Direct mode: initial fit - populate neighborhood cache
+            workspace.executor_buffer.neighborhood_cache.entries.clear();
             self.smooth_pass(
                 &ax,
                 &ay,
@@ -863,7 +866,10 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 &mut workspace.neighborhood,
                 &mut workspace.fitting_buffer,
                 None, // No leverage collection during initial fit
+                Some(&mut workspace.executor_buffer.neighborhood_cache.entries), // Populate cache
+                None, // Not using cache yet
             );
+            workspace.executor_buffer.neighborhood_cache.is_valid = true;
         }
 
         let mut iterations_performed = 1;
@@ -976,6 +982,18 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     }
                 }
                 SurfaceMode::Direct => {
+                    // Use cached neighborhoods to skip KD-tree searches
+                    let cache_ref = if workspace.executor_buffer.neighborhood_cache.is_valid {
+                        Some(
+                            workspace
+                                .executor_buffer
+                                .neighborhood_cache
+                                .entries
+                                .as_slice(),
+                        )
+                    } else {
+                        None
+                    };
                     self.smooth_pass(
                         &ax,
                         &ay,
@@ -991,7 +1009,9 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                         &mut workspace.search_buffer,
                         &mut workspace.neighborhood,
                         &mut workspace.fitting_buffer,
-                        None, // No leverage collection during robustness iterations
+                        None,      // No leverage collection during robustness iterations
+                        None,      // Not populating cache
+                        cache_ref, // Use cached neighborhoods
                     );
                 }
             }
@@ -1002,6 +1022,18 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             if confidence_method.is_some() && self.surface_mode == SurfaceMode::Direct {
                 let mut leverages = Vec::with_capacity(n);
                 // Final pass with leverage collection
+                // Use cached neighborhoods for leverage pass
+                let cache_ref = if workspace.executor_buffer.neighborhood_cache.is_valid {
+                    Some(
+                        workspace
+                            .executor_buffer
+                            .neighborhood_cache
+                            .entries
+                            .as_slice(),
+                    )
+                } else {
+                    None
+                };
                 self.smooth_pass(
                     &ax,
                     &ay,
@@ -1018,6 +1050,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     &mut workspace.neighborhood,
                     &mut workspace.fitting_buffer,
                     Some(&mut leverages),
+                    None,      // Not populating cache
+                    cache_ref, // Use cached neighborhoods
                 );
                 Some(leverages)
             } else {
@@ -1179,6 +1213,13 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
     }
 
     /// Perform a single smoothing pass over all nD points (Direct mode).
+    ///
+    /// # Caching Behavior
+    ///
+    /// * `populate_cache`: If `Some(&mut cache)`, populate the cache with neighborhoods during this pass.
+    /// * `cached_neighborhoods`: If `Some(&cache)`, use cached neighborhoods instead of calling `find_k_nearest`.
+    ///
+    /// Typically, the first pass populates the cache, and subsequent robustness iterations use it.
     #[allow(clippy::too_many_arguments)]
     fn smooth_pass(
         &self,
@@ -1197,6 +1238,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         neighborhood: &mut Neighborhood<T>,
         fitting_buffer: &mut FittingBuffer<T>,
         mut leverage_out: Option<&mut Vec<T>>,
+        mut populate_cache: Option<&mut Vec<CachedNeighborhood<T>>>,
+        cached_neighborhoods: Option<&[CachedNeighborhood<T>]>,
     ) where
         T: Float + Debug + Send + Sync + 'static,
     {
@@ -1207,19 +1250,47 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         };
         let compute_leverage = leverage_out.is_some();
 
+        // Prepare cache for population if requested
+        if let Some(ref mut cache) = populate_cache.as_ref() {
+            // Pre-allocate capacity but will push during iteration
+            let _ = cache; // just to check it's mutable
+        }
+
         for i in 0..original_n {
             let query_offset = i * dims;
             let query_point = &x_query[query_offset..query_offset + dims];
 
-            kdtree.find_k_nearest(
-                query_point,
-                window_size,
-                &dist_calc,
-                None,
-                search_buffer,
-                neighborhood,
-            );
-            let neighborhood = &neighborhood;
+            // Either use cached neighborhood or compute fresh
+            if let Some(cache) = cached_neighborhoods {
+                // Use cached neighborhood
+                let cached = &cache[i];
+                neighborhood.indices.clear();
+                neighborhood.indices.extend_from_slice(&cached.indices);
+                neighborhood.distances.clear();
+                neighborhood.distances.extend_from_slice(&cached.distances);
+                neighborhood.max_distance = cached.max_distance;
+            } else {
+                // Compute neighborhood via KD-tree
+                kdtree.find_k_nearest(
+                    query_point,
+                    window_size,
+                    &dist_calc,
+                    None,
+                    search_buffer,
+                    neighborhood,
+                );
+
+                // Populate cache if requested
+                if let Some(ref mut cache) = populate_cache {
+                    cache.push(CachedNeighborhood {
+                        indices: neighborhood.indices.clone(),
+                        distances: neighborhood.distances.clone(),
+                        max_distance: neighborhood.max_distance,
+                    });
+                }
+            }
+
+            let neighborhood_ref = &*neighborhood;
 
             let mut context = RegressionContext::new(
                 x_context,
@@ -1227,7 +1298,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 y_context,
                 i,
                 Some(query_point),
-                neighborhood,
+                neighborhood_ref,
                 use_robustness,
                 robustness_weights,
                 self.weight_function,

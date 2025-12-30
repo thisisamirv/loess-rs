@@ -30,7 +30,7 @@ use num_traits::Float;
 
 // Internal dependencies
 use crate::math::neighborhood::{KDTree, Neighborhood, NodeDistance, PointDistance};
-use crate::primitives::buffer::{FittingBuffer, NeighborhoodSearchBuffer};
+use crate::primitives::buffer::{CachedNeighborhood, FittingBuffer, NeighborhoodSearchBuffer};
 
 // ============================================================================
 // Surface Cell
@@ -81,6 +81,8 @@ pub struct InterpolationSurface<T: Float> {
     pub root: usize,
     /// Number of dimensions.
     pub dimensions: usize,
+    /// Cached neighborhoods for each vertex to speed up refitting.
+    pub vertex_neighborhoods: Vec<CachedNeighborhood<T>>,
 }
 
 impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
@@ -197,6 +199,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         // Layout: [v0_val, v0_dx1, ..., v0_dxd, v1_val, v1_dx1, ..., v1_dxd, ...]
         let stride = dimensions + 1; // d+1 values per vertex
         let mut vertex_data = vec![T::zero(); vertices.len() * stride];
+        let mut vertex_neighborhoods = Vec::with_capacity(vertices.len() / dimensions);
 
         for v_idx in 0..vertices.len() / dimensions {
             let v_start = v_idx * dimensions;
@@ -211,6 +214,13 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 search_buffer,
                 neighborhood,
             );
+
+            // Cache the neighborhood for future refits
+            vertex_neighborhoods.push(CachedNeighborhood {
+                indices: neighborhood.indices.clone(),
+                distances: neighborhood.distances.clone(),
+                max_distance: neighborhood.max_distance,
+            });
 
             let base_idx = v_idx * stride;
 
@@ -239,6 +249,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             vertex_data,
             vertices,
             cells,
+            vertex_neighborhoods,
             root: 0,
             dimensions,
         }
@@ -252,11 +263,11 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     pub fn refit_values<D, F>(
         &mut self,
         y: &[T],
-        kdtree: &KDTree<T>,
-        window_size: usize,
-        dist_calc: &D,
+        _kdtree: &KDTree<T>,
+        _window_size: usize,
+        _dist_calc: &D,
         mut fitter: F,
-        search_buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
+        _search_buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
         neighborhood: &mut Neighborhood<T>,
         fitting_buffer: &mut FittingBuffer<T>,
     ) where
@@ -266,19 +277,16 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let n = y.len() / self.dimensions;
         let stride = self.dimensions + 1; // d+1 values per vertex
 
-        for v_idx in 0..self.vertices.len() / self.dimensions {
+        for (v_idx, cached) in self.vertex_neighborhoods.iter().enumerate() {
             let v_start = v_idx * self.dimensions;
             let vertex = &self.vertices[v_start..v_start + self.dimensions];
 
-            // Find neighbors for this vertex using workspace buffers
-            kdtree.find_k_nearest(
-                vertex,
-                window_size,
-                dist_calc,
-                None,
-                search_buffer,
-                neighborhood,
-            );
+            // Use cached neighborhood instead of KD-tree search
+            neighborhood.indices.clear();
+            neighborhood.indices.extend_from_slice(&cached.indices);
+            neighborhood.distances.clear();
+            neighborhood.distances.extend_from_slice(&cached.distances);
+            neighborhood.max_distance = cached.max_distance;
 
             let base_idx = v_idx * stride;
 

@@ -245,6 +245,53 @@ impl<T> FittingBuffer<T> {
     }
 }
 
+/// Cache of pre-computed neighborhoods for each query point.
+///
+/// Used to avoid repeated KD-tree searches during robustness iterations,
+/// since neighborhoods are invariant (only regression weights change).
+#[derive(Debug, Clone)]
+pub struct NeighborhoodCache<T> {
+    /// Cached neighborhoods: (indices, distances, max_distance) for each point.
+    pub entries: Vec<CachedNeighborhood<T>>,
+    /// Whether the cache is populated and valid.
+    pub is_valid: bool,
+}
+
+/// A single cached neighborhood for one query point.
+#[derive(Debug, Clone)]
+pub struct CachedNeighborhood<T> {
+    /// Indices of the k nearest neighbors.
+    pub indices: Vec<usize>,
+    /// Distances to each neighbor.
+    pub distances: Vec<T>,
+    /// Maximum distance in the neighborhood (bandwidth).
+    pub max_distance: T,
+}
+
+impl<T: Float> NeighborhoodCache<T> {
+    /// Create a new empty cache.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            is_valid: false,
+        }
+    }
+
+    /// Create a cache with pre-allocated capacity for n points.
+    pub fn with_capacity(n: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(n),
+            is_valid: false,
+        }
+    }
+}
+
+impl<T: Float> Default for NeighborhoodCache<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Persistent buffers for global executor state.
 pub struct ExecutorBuffer<T> {
     /// Minimum values for each dimension.
@@ -259,9 +306,11 @@ pub struct ExecutorBuffer<T> {
     pub residuals: Slot<T>,
     /// Sorted residuals for median computation.
     pub sorted_residuals: Slot<T>,
+    /// Cached neighborhoods to avoid repeated KD-tree searches.
+    pub neighborhood_cache: NeighborhoodCache<T>,
 }
 
-impl<T> ExecutorBuffer<T> {
+impl<T: Float> ExecutorBuffer<T> {
     /// Create a new executor buffer with given capacities.
     pub fn new(n: usize, dims: usize) -> Self {
         Self {
@@ -271,6 +320,7 @@ impl<T> ExecutorBuffer<T> {
             robustness_weights: Slot::new(n),
             residuals: Slot::new(n),
             sorted_residuals: Slot::new(n),
+            neighborhood_cache: NeighborhoodCache::with_capacity(n),
         }
     }
 
