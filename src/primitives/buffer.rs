@@ -200,7 +200,6 @@ pub trait NeighborhoodStorage {
 /// Persistent buffers for KD-tree search to avoid allocations.
 pub struct NeighborhoodSearchBuffer<N> {
     pub(crate) heap: BinaryHeap<N>,
-    pub(crate) sort_vec: Vec<N>,
     pub(crate) stack: Vec<usize>,
 }
 
@@ -211,7 +210,6 @@ impl<N: Ord> NeighborhoodSearchBuffer<N> {
         // Pre-allocate for ~1M points (log2(1M) ≈ 20).
         Self {
             heap: BinaryHeap::with_capacity(k),
-            sort_vec: Vec::with_capacity(k),
             stack: Vec::with_capacity(32),
         }
     }
@@ -219,7 +217,6 @@ impl<N: Ord> NeighborhoodSearchBuffer<N> {
     /// Clear all internal buffers for reuse.
     pub fn clear(&mut self) {
         self.heap.clear();
-        self.sort_vec.clear();
         self.stack.clear();
     }
 }

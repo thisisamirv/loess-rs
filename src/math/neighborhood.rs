@@ -217,18 +217,11 @@ impl<T: Float> KDTree<T> {
         buffer.clear();
         self.search_iterative(query, k, dist_calc, exclude_self, buffer);
 
-        // Copy to sort vector
-        buffer.sort_vec.clear();
-        for &nd in buffer.heap.iter() {
-            buffer.sort_vec.push(nd);
-        }
-
-        // Update neighborhood in-place
         neighborhood.indices.clear();
         neighborhood.distances.clear();
-        for nd in &buffer.sort_vec {
-            neighborhood.indices.push(nd.0);
-            neighborhood.distances.push(nd.1);
+        for &NodeDistance(idx, dist) in buffer.heap.iter() {
+            neighborhood.indices.push(idx);
+            neighborhood.distances.push(dist);
         }
         // Since heap is a MaxHeap, the largest distance (bandwidth) is at the top
         neighborhood.max_distance = buffer.heap.peek().map(|nd| nd.1).unwrap_or(T::zero());
