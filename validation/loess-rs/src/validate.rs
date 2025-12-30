@@ -1,6 +1,7 @@
 use loess_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::error::Error;
 use std::fs;
 use std::path::Path;
 
@@ -35,7 +36,7 @@ struct ResultData {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let input_dir = Path::new("../output/scikit");
+    let input_dir = Path::new("../output/r");
     let output_dir = Path::new("../output/loess_rs");
 
     if !input_dir.exists() {
@@ -52,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            println!("Processing {:?}", path.file_name().unwrap());
             process_file(&path, output_dir)?;
         }
     }
@@ -59,23 +61,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn process_file(path: &Path, output_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Processing {:?}", path.file_name().unwrap());
-
-    let content = fs::read_to_string(path)?;
-    let mut data: ValidationData = serde_json::from_str(&content)?;
-
-    // Handle surface parameter from extra args
-    let mut surface = "interpolate".to_string(); // Default
-    if let Some(extra) = &data.params.extra {
-        if let Some(obj) = extra.get("extra") {
-            if let Some(val) = obj.get("surface") {
-                if let Some(s) = val.as_str() {
-                    surface = s.to_string();
-                }
-            }
-        }
-    }
+fn process_file(input_path: &Path, output_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let file = fs::File::open(input_path)?;
+    let mut data: ValidationData = serde_json::from_reader(file)?;
 
     let degree = match data.params.degree {
         0 => Constant,
@@ -85,10 +73,28 @@ fn process_file(path: &Path, output_dir: &Path) -> Result<(), Box<dyn std::error
         _ => panic!("Unsupported degree: {}", data.params.degree),
     };
 
+    let surface_mode = if let Some(extra) = &data.params.extra {
+        let is_direct = extra.get("surface").and_then(|v| v.as_str()) == Some("direct")
+            || extra
+                .get("extra")
+                .and_then(|v| v.get("surface"))
+                .and_then(|v| v.as_str())
+                == Some("direct");
+
+        if is_direct {
+            Direct
+        } else {
+            Interpolation
+        }
+    } else {
+        Interpolation
+    };
+
     let processor = Loess::new()
         .fraction(data.params.fraction)
         .degree(degree)
         .iterations(data.params.iterations)
+        .surface_mode(surface_mode)
         .adapter(Batch)
         .build()?;
 
@@ -97,7 +103,7 @@ fn process_file(path: &Path, output_dir: &Path) -> Result<(), Box<dyn std::error
 
     data.result.fitted = fitted;
 
-    let output_path = output_dir.join(path.file_name().unwrap());
+    let output_path = output_dir.join(input_path.file_name().unwrap());
     let output_json = serde_json::to_string_pretty(&data)?;
     fs::write(output_path, output_json)?;
 

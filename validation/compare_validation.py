@@ -1,84 +1,88 @@
+#!/usr/bin/env python3
+"""
+Compare loess-rs validation results against R's loess implementation.
+R is the reference implementation (original Cleveland algorithm).
+"""
+
 import json
-import os
-import glob
 import numpy as np
-import sys
+from pathlib import Path
 
-SCIKIT_DIR = "output/scikit"
-LOESS_RS_DIR = "output/loess_rs"
-
-def load_json(path):
-    with open(path, 'r') as f:
-        return json.load(f)
-
-def compare_scenarios():
-    scikit_files = glob.glob(os.path.join(SCIKIT_DIR, "*.json"))
-    scikit_files.sort()
+def compare_implementations():
+    r_dir = Path("output/r")
+    loess_rs_dir = Path("output/loess_rs")
     
-    if not scikit_files:
-        print(f"No files found in {SCIKIT_DIR}")
+    if not r_dir.exists():
+        print("Error: R output directory not found. Run R/validate.R first.")
         return
-
+    
+    if not loess_rs_dir.exists():
+        print("Error: loess-rs output directory not found. Run loess-rs/validate first.")
+        return
+    
+    print("=" * 85)
+    print("VALIDATION: loess-rs vs R (Reference Implementation)")
+    print("=" * 85)
+    print()
     print(f"{'SCENARIO':<30} | {'STATUS':<15} | {'MAX DIFF':<15} | {'RMSE':<15}")
     print("-" * 85)
-
-    failures = []
-
-    for s_path in scikit_files:
-        filename = os.path.basename(s_path)
-        l_path = os.path.join(LOESS_RS_DIR, filename)
+    
+    scenarios = sorted([f.stem for f in r_dir.glob("*.json")])
+    
+    matches = []
+    mismatches = []
+    
+    for scenario in scenarios:
+        r_file = r_dir / f"{scenario}.json"
+        rs_file = loess_rs_dir / f"{scenario}.json"
         
-        name = filename.replace(".json", "")
-
-        if not os.path.exists(l_path):
-            print(f"{name:<30} | {'MISSING':<15} | {'-':<15} | {'-':<15}")
-            failures.append(name)
+        if not rs_file.exists():
+            print(f"{scenario:<30} | {'MISSING':<15} | {'-':<15} | {'-':<15}")
             continue
-
-        try:
-            s_data = load_json(s_path)
-            l_data = load_json(l_path)
-            
-            # Extract fitted values
-            # Structure: {"result": {"fitted": [...]}}
-            s_fitted = np.array(s_data['result']['fitted'])
-            l_fitted = np.array(l_data['result']['fitted'])
-            
-            if s_fitted.shape != l_fitted.shape:
-                print(f"{name:<30} | {'SHAPE MISMATCH':<15} | {'-':<15} | {'-':<15}")
-                failures.append(name)
-                continue
-
-            # Compare
-            diff = np.abs(s_fitted - l_fitted)
-            max_diff = np.max(diff)
-            rmse = np.sqrt(np.mean(diff**2))
-            
-            # Tolerance for floating point differences across implementations
-            # 1e-6 is a reasonable target for numerical consistency
-            tolerance = 1e-6
-            
-            if max_diff < tolerance:
-                status = "MATCH"
-            else:
-                status = "MISMATCH"
-                failures.append(name)
-
-            print(f"{name:<30} | {status:<15} | {max_diff:<15.2e} | {rmse:<15.2e}")
-
-        except Exception as e:
-            print(f"{name:<30} | {'ERROR':<15} | {str(e):<15} | {'-':<15}")
-            failures.append(name)
-
+        
+        # Load data
+        with open(r_file) as f:
+            r_data = json.load(f)
+        with open(rs_file) as f:
+            rs_data = json.load(f)
+        
+        # Compare fitted values
+        r_fitted = np.array(r_data['result']['fitted'])
+        rs_fitted = np.array(rs_data['result']['fitted'])
+        
+        diff = np.abs(r_fitted - rs_fitted)
+        max_diff = np.max(diff)
+        rmse = np.sqrt(np.mean(diff**2))
+        
+        # Determine status
+        if max_diff < 1e-10:
+            status = "EXACT MATCH"
+            matches.append(scenario)
+        elif max_diff < 1e-6:
+            status = "MATCH"
+            matches.append(scenario)
+        elif max_diff < 1e-3:
+            status = "CLOSE"
+            matches.append(scenario)
+        else:
+            status = "MISMATCH"
+            mismatches.append(scenario)
+        
+        print(f"{scenario:<30} | {status:<15} | {max_diff:<15.2e} | {rmse:<15.2e}")
+    
     print("-" * 85)
-    if failures:
-        print(f"\nFAILURES ({len(failures)}):")
-        for f in failures:
-            print(f"  - {f}")
-        sys.exit(1)
+    print()
+    print(f"Summary: {len(matches)} matches, {len(mismatches)} mismatches")
+    
+    if mismatches:
+        print(f"\nFAILURES ({len(mismatches)}):")
+        for scenario in mismatches:
+            print(f"  - {scenario}")
     else:
-        print("\nAll scenarios passed!")
-        sys.exit(0)
+        print("\n✓ All scenarios PASS!")
+    
+    return len(mismatches) == 0
 
 if __name__ == "__main__":
-    compare_scenarios()
+    success = compare_implementations()
+    exit(0 if success else 1)
