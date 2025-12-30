@@ -989,11 +989,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
 
                         surface.refit_values(
                             &ay,
-                            &kdtree,
-                            window_size,
-                            &dist_calc,
                             fitter,
-                            &mut workspace.search_buffer,
                             &mut workspace.neighborhood,
                             &mut workspace.fitting_buffer,
                         );

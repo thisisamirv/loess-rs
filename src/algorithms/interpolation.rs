@@ -183,7 +183,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         // Disable the minimum cell diameter check
         let fd = T::zero();
 
-        // Build KD-tree using iterative algorithm (matches scikit-misc's ehg124)
+        // Build KD-tree using iterative algorithm
         Self::build_kdtree(
             &mut cells,
             &mut vertices,
@@ -260,18 +260,13 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     /// This is used during robustness iterations to update vertex fits
     /// with new robustness weights, avoiding the expensive cell subdivision.
     #[allow(clippy::too_many_arguments)]
-    pub fn refit_values<D, F>(
+    pub fn refit_values<F>(
         &mut self,
         y: &[T],
-        _kdtree: &KDTree<T>,
-        _window_size: usize,
-        _dist_calc: &D,
         mut fitter: F,
-        _search_buffer: &mut NeighborhoodSearchBuffer<NodeDistance<T>>,
         neighborhood: &mut Neighborhood<T>,
         fitting_buffer: &mut FittingBuffer<T>,
     ) where
-        D: PointDistance<T>,
         F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>) -> Option<Vec<T>>,
     {
         let n = y.len() / self.dimensions;
@@ -316,7 +311,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         }
     }
 
-    /// Build KD-tree iteratively, matching scikit-misc's ehg124 algorithm.
+    /// Build KD-tree iteratively
     ///
     /// Uses a while loop with cell counter `p` instead of recursion.
     /// Cells are processed in order while new cells are appended to the end.
@@ -339,7 +334,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let vc = 1usize << dimensions; // Number of corners per cell (2^d)
         let max_cells = max_vertices.saturating_mul(2); // ncmax equivalent
 
-        // p = current cell index being processed (0-indexed, ehg124 uses 1-indexed)
+        // p = current cell index being processed
         let mut p = 0;
 
         // Main loop: process cells from 0 to nc-1
@@ -348,7 +343,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             let nv = vertices.len() / dimensions;
             let nc = cells.len();
 
-            // Hard limits check (ehg124 lines 1891-1896)
+            // Hard limits check
             if nc + 2 > max_cells || nv + vc / 2 > max_vertices {
                 p += 1;
                 continue;
@@ -359,7 +354,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             let hi = cells[p].point_hi;
             let points_in_cell = if hi >= lo { hi - lo + 1 } else { 0 };
 
-            // Calculate cell diameter using vertex coordinates (ehg124 lines 1875-1882)
+            // Calculate cell diameter using vertex coordinates
             let parent_verts = &cells[p].vertex_indices;
             let first_v = parent_verts[0];
             let last_v = parent_verts[vc - 1];
@@ -370,7 +365,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             }
             let diam = diam_sq.sqrt();
 
-            // Leaf determination (ehg124 lines 1883-1888)
+            // Leaf determination
             let is_leaf = points_in_cell <= fc || diam <= fd || points_in_cell == 0;
 
             if is_leaf {
@@ -378,7 +373,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 continue;
             }
 
-            // Find dimension with largest spread (ehg129)
+            // Find dimension with largest spread
             let mut best_dim = 0;
             let mut best_spread = T::zero();
             for d in 0..dimensions {
@@ -400,48 +395,46 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 }
             }
 
-            // Find and partition at median (ehg106 line 1902)
+            // Find and partition at median
             let mut m = (lo + hi) / 2;
             Self::partition_by_dim(pi, lo, hi, m, x, best_dim, dimensions);
 
-            // Tie handling (ehg124 lines 1907-1928)
+            // Tie handling
             // All ties go with hi son. Search with alternating offsets.
             let mut offset: isize = 0;
 
             loop {
-                // Line 1908: exit if m+offset out of bounds
+                // Exit if m+offset out of bounds
                 let m_off = m as isize + offset;
                 if m_off >= hi as isize || m_off < lo as isize {
                     break;
                 }
                 let m_off_usize = m_off as usize;
 
-                // Lines 1909-1918: Re-partition only when offset != 0
+                // Re-partition only when offset != 0
                 if offset != 0 {
                     let (lower, upper, check) = if offset < 0 {
-                        // Lines 1909-1912
                         (lo, m_off_usize, m_off_usize)
                     } else {
-                        // Lines 1914-1916
                         (m_off_usize + 1, hi, m_off_usize + 1)
                     };
                     Self::partition_by_dim(pi, lower, upper, check, x, best_dim, dimensions);
                 }
 
-                // Line 1919: check if tied
+                // check if tied
                 if m_off_usize < hi {
                     let val_m = x[pi[m_off_usize] * dimensions + best_dim];
                     let val_m1 = x[pi[m_off_usize + 1] * dimensions + best_dim];
 
                     if val_m == val_m1 {
-                        // Lines 1920-1924: tied, alternate offset
+                        // tied, alternate offset
                         offset = -offset;
                         if offset >= 0 {
                             offset += 1;
                         }
                         continue;
                     } else {
-                        // Lines 1925-1927: not tied, update m and exit
+                        // not tied, update m and exit
                         m = m_off_usize;
                         break;
                     }
@@ -456,7 +449,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
 
             let split_val = x[pi[m] * dimensions + best_dim];
 
-            // Zero-volume check (ehg124 lines 1931-1935)
+            // Zero-volume check
             // Check if split_val equals vertex coordinate of parent cell
             let first_v_coord = vertices[first_v * dimensions + best_dim];
             let last_v_coord = vertices[last_v * dimensions + best_dim];
@@ -466,8 +459,8 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 continue;
             }
 
-            // --- Create new vertices (ehg125) ---
-            let num_new_vertices = 1usize << (dimensions - 1); // 2^(d-1)
+            // --- Create new vertices ---
+            let num_new_vertices = 1usize << (dimensions - 1);
             let nv_before = vertices.len() / dimensions;
             let mut split_plane_indices = Vec::with_capacity(num_new_vertices);
 
@@ -488,7 +481,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                     }
                 }
 
-                // Deduplication: search only in vertices that existed BEFORE this split (ehg125)
+                // Deduplication: search only in vertices that existed BEFORE this split
                 let mut found_idx = None;
                 for i in 0..nv_before {
                     let start = i * dimensions;
@@ -575,7 +568,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             cells[p].split_dim = Some(best_dim);
             cells[p].split_val = Some(split_val);
 
-            // Move to next cell (ehg124 line 1955)
+            // Move to next cel
             p += 1;
         }
     }
@@ -663,7 +656,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         }
     }
 
-    /// Hermite basis functions as used in scikit-misc ehg128.
+    /// Hermite basis functions
     #[inline]
     fn hermite_phi0(h: T) -> T {
         // (1-h)^2 * (1+2h)
@@ -695,7 +688,6 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     }
 
     /// Perform Hermite interpolation within a cell using value + derivatives.
-    /// Matches scikit-misc's ehg128 algorithm.
     fn interpolate_in_cell(&self, cell: &SurfaceCell<T>, query: &[T]) -> T {
         let d = self.dimensions;
         let stride = d + 1; // d+1 values per vertex: [value, d/dx1, d/dx2, ..., d/dxd]
@@ -735,14 +727,12 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
             let psi0 = Self::hermite_psi0(h);
             let psi1 = Self::hermite_psi1(h);
 
-            // Hermite interpolation matching scikit-misc:
-            // result = phi0*g0_val + phi1*g1_val + (psi0*g0_deriv + psi1*g1_deriv) * range
+            // Hermite interpolation
             return phi0 * g0_val + phi1 * g1_val + (psi0 * g0_deriv + psi1 * g1_deriv) * range;
         }
 
         // For higher dimensions, use tensor Hermite interpolation
-        // This is more complex - scikit-misc uses recursive tensor product
-        // For now, fallback to multilinear for nD (can be enhanced later)
+        // TODO: For now, fallback to multilinear for nD (can be enhanced later)
         self.hermite_tensor_interpolation(cell, query)
     }
 
@@ -766,7 +756,6 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     }
 
     /// Tensor Hermite interpolation for nD case.
-    /// Uses dimension-by-dimension interpolation like scikit-misc.
     fn hermite_tensor_interpolation(&self, cell: &SurfaceCell<T>, query: &[T]) -> T {
         let d = self.dimensions;
         let stride = d + 1;

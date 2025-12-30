@@ -104,7 +104,7 @@ pub struct LoessResult<T> {
     pub cv_scores: Option<Vec<T>>,
 
     // ========================================================================
-    // Hat Matrix Statistics (scikit-misc parity)
+    // Hat Matrix Statistics
     // ========================================================================
     /// Equivalent Number of Parameters (trace of hat matrix).
     /// This measures the effective model complexity.
