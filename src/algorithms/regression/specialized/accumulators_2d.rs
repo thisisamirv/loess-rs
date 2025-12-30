@@ -2,7 +2,9 @@
 //!
 //! ## Purpose
 //!
-//! This module provides optimized scalar and SIMD accumulation functions for building Normal Equations matrices in 2D linear, quadratic, and cubic regression.
+//! This module provides optimized scalar and SIMD accumulation functions
+//! for building Normal Equations matrices in 2D linear, quadratic,
+//! and cubic regression.
 
 // External dependencies
 use num_traits::Float;
