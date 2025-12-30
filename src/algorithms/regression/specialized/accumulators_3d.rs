@@ -41,36 +41,39 @@ pub fn accumulate_3d_linear_scalar<T: Float>(
     let mut s_wyy = T::zero();
     let mut s_wzy = T::zero();
 
-    for i in 0..n {
-        let w = weights[i];
-        if w <= T::epsilon() {
-            continue;
+    // SAFETY: Invariants guaranteed by KD-tree.
+    unsafe {
+        for i in 0..n {
+            let w = *weights.get_unchecked(i);
+            if w <= T::epsilon() {
+                continue;
+            }
+            let idx = *indices.get_unchecked(i);
+            let dx = *x.get_unchecked(idx * 3) - query_x;
+            let dy = *x.get_unchecked(idx * 3 + 1) - query_y;
+            let dz = *x.get_unchecked(idx * 3 + 2) - query_z;
+            let val_y = *y.get_unchecked(idx);
+
+            let wdx = w * dx;
+            let wdy = w * dy;
+            let wdz = w * dz;
+
+            s_w = s_w + w;
+            s_x = s_x + wdx;
+            s_y = s_y + wdy;
+            s_z = s_z + wdz;
+            s_x2 = s_x2 + wdx * dx;
+            s_y2 = s_y2 + wdy * dy;
+            s_z2 = s_z2 + wdz * dz;
+            s_xy = s_xy + wdx * dy;
+            s_xz = s_xz + wdx * dz;
+            s_yz = s_yz + wdy * dz;
+
+            s_wy = s_wy + w * val_y;
+            s_wxy = s_wxy + wdx * val_y;
+            s_wyy = s_wyy + wdy * val_y;
+            s_wzy = s_wzy + wdz * val_y;
         }
-        let idx = indices[i];
-        let dx = x[idx * 3] - query_x;
-        let dy = x[idx * 3 + 1] - query_y;
-        let dz = x[idx * 3 + 2] - query_z;
-        let val_y = y[idx];
-
-        let wdx = w * dx;
-        let wdy = w * dy;
-        let wdz = w * dz;
-
-        s_w = s_w + w;
-        s_x = s_x + wdx;
-        s_y = s_y + wdy;
-        s_z = s_z + wdz;
-        s_x2 = s_x2 + wdx * dx;
-        s_y2 = s_y2 + wdy * dy;
-        s_z2 = s_z2 + wdz * dz;
-        s_xy = s_xy + wdx * dy;
-        s_xz = s_xz + wdx * dz;
-        s_yz = s_yz + wdy * dz;
-
-        s_wy = s_wy + w * val_y;
-        s_wxy = s_wxy + wdx * val_y;
-        s_wyy = s_wyy + wdy * val_y;
-        s_wzy = s_wzy + wdz * val_y;
     }
 
     xtwx[0] = s_w;
@@ -131,41 +134,50 @@ pub fn accumulate_3d_linear_simd(
     let qz = f64x2::splat(query_z);
 
     let mut i = 0;
-    while i + 2 <= n {
-        let idx0 = indices[i];
-        let idx1 = indices[i + 1];
+    // SAFETY: Use unchecked access for performance. Invariants guaranteed by KD-tree.
+    unsafe {
+        while i + 2 <= n {
+            let idx0 = *indices.get_unchecked(i);
+            let idx1 = *indices.get_unchecked(i + 1);
 
-        let w = f64x2::new([weights[i], weights[i + 1]]);
-        let px = f64x2::new([x[idx0 * 3], x[idx1 * 3]]);
-        let py = f64x2::new([x[idx0 * 3 + 1], x[idx1 * 3 + 1]]);
-        let pz = f64x2::new([x[idx0 * 3 + 2], x[idx1 * 3 + 2]]);
-        let vy = f64x2::new([y[idx0], y[idx1]]);
+            let w = f64x2::new([*weights.get_unchecked(i), *weights.get_unchecked(i + 1)]);
+            let px = f64x2::new([*x.get_unchecked(idx0 * 3), *x.get_unchecked(idx1 * 3)]);
+            let py = f64x2::new([
+                *x.get_unchecked(idx0 * 3 + 1),
+                *x.get_unchecked(idx1 * 3 + 1),
+            ]);
+            let pz = f64x2::new([
+                *x.get_unchecked(idx0 * 3 + 2),
+                *x.get_unchecked(idx1 * 3 + 2),
+            ]);
+            let vy = f64x2::new([*y.get_unchecked(idx0), *y.get_unchecked(idx1)]);
 
-        let dx = px - qx;
-        let dy = py - qy;
-        let dz = pz - qz;
+            let dx = px - qx;
+            let dy = py - qy;
+            let dz = pz - qz;
 
-        let wdx = w * dx;
-        let wdy = w * dy;
-        let wdz = w * dz;
+            let wdx = w * dx;
+            let wdy = w * dy;
+            let wdz = w * dz;
 
-        s_w += w;
-        s_x += wdx;
-        s_y += wdy;
-        s_z += wdz;
-        s_x2 += wdx * dx;
-        s_y2 += wdy * dy;
-        s_z2 += wdz * dz;
-        s_xy += wdx * dy;
-        s_xz += wdx * dz;
-        s_yz += wdy * dz;
+            s_w += w;
+            s_x += wdx;
+            s_y += wdy;
+            s_z += wdz;
+            s_x2 += wdx * dx;
+            s_y2 += wdy * dy;
+            s_z2 += wdz * dz;
+            s_xy += wdx * dy;
+            s_xz += wdx * dz;
+            s_yz += wdy * dz;
 
-        s_wy += w * vy;
-        s_wxy += wdx * vy;
-        s_wyy += wdy * vy;
-        s_wzy += wdz * vy;
+            s_wy += w * vy;
+            s_wxy += wdx * vy;
+            s_wyy += wdy * vy;
+            s_wzy += wdz * vy;
 
-        i += 2;
+            i += 2;
+        }
     }
 
     let mut a_w = s_w.reduce_add();
@@ -183,37 +195,39 @@ pub fn accumulate_3d_linear_simd(
     let mut a_wyy = s_wyy.reduce_add();
     let mut a_wzy = s_wzy.reduce_add();
 
-    for k in i..n {
-        let w = weights[k];
-        if w <= f64::EPSILON {
-            continue;
+    unsafe {
+        for k in i..n {
+            let w = *weights.get_unchecked(k);
+            if w <= f64::EPSILON {
+                continue;
+            }
+
+            let idx = *indices.get_unchecked(k);
+            let dx = *x.get_unchecked(idx * 3) - query_x;
+            let dy = *x.get_unchecked(idx * 3 + 1) - query_y;
+            let dz = *x.get_unchecked(idx * 3 + 2) - query_z;
+            let val_y = *y.get_unchecked(idx);
+
+            let wdx = w * dx;
+            let wdy = w * dy;
+            let wdz = w * dz;
+
+            a_w += w;
+            a_x += wdx;
+            a_y += wdy;
+            a_z += wdz;
+            a_x2 += wdx * dx;
+            a_y2 += wdy * dy;
+            a_z2 += wdz * dz;
+            a_xy += wdx * dy;
+            a_xz += wdx * dz;
+            a_yz += wdy * dz;
+
+            a_wy += w * val_y;
+            a_wxy += wdx * val_y;
+            a_wyy += wdy * val_y;
+            a_wzy += wdz * val_y;
         }
-
-        let idx = indices[k];
-        let dx = x[idx * 3] - query_x;
-        let dy = x[idx * 3 + 1] - query_y;
-        let dz = x[idx * 3 + 2] - query_z;
-        let val_y = y[idx];
-
-        let wdx = w * dx;
-        let wdy = w * dy;
-        let wdz = w * dz;
-
-        a_w += w;
-        a_x += wdx;
-        a_y += wdy;
-        a_z += wdz;
-        a_x2 += wdx * dx;
-        a_y2 += wdy * dy;
-        a_z2 += wdz * dz;
-        a_xy += wdx * dy;
-        a_xz += wdx * dz;
-        a_yz += wdy * dz;
-
-        a_wy += w * val_y;
-        a_wxy += wdx * val_y;
-        a_wyy += wdy * val_y;
-        a_wzy += wdz * val_y;
     }
 
     xtwx[0] = a_w;
@@ -307,88 +321,91 @@ pub fn accumulate_3d_quadratic_scalar<T: Float>(
     let mut s_wyzy = T::zero();
     let mut s_wz2y = T::zero();
 
-    for i in 0..n {
-        let w = weights[i];
-        if w <= T::epsilon() {
-            continue;
+    // SAFETY: Invariants guaranteed by KD-tree.
+    unsafe {
+        for i in 0..n {
+            let w = *weights.get_unchecked(i);
+            if w <= T::epsilon() {
+                continue;
+            }
+
+            let idx = *indices.get_unchecked(i);
+            let dx = *x.get_unchecked(idx * 3) - query_x;
+            let dy = *x.get_unchecked(idx * 3 + 1) - query_y;
+            let dz = *x.get_unchecked(idx * 3 + 2) - query_z;
+            let val = *y.get_unchecked(idx);
+
+            let wdx = w * dx;
+            let wdy = w * dy;
+            let wdz = w * dz;
+
+            let dy2 = dy * dy;
+            let dz2 = dz * dz;
+
+            // Order 0, 1
+            s_w = s_w + w;
+            s_x = s_x + wdx;
+            s_y = s_y + wdy;
+            s_z = s_z + wdz;
+
+            // Order 2
+            s_x2 = s_x2 + wdx * dx;
+            s_y2 = s_y2 + wdy * dy;
+            s_z2 = s_z2 + wdz * dz;
+            s_xy = s_xy + wdx * dy;
+            s_xz = s_xz + wdx * dz;
+            s_yz = s_yz + wdy * dz;
+
+            // Order 3
+            let wdx2 = wdx * dx;
+            let wdy2 = wdy * dy;
+            let wdz2 = wdz * dz;
+
+            s_x3 = s_x3 + wdx2 * dx;
+            s_y3 = s_y3 + wdy2 * dy;
+            s_z3 = s_z3 + wdz2 * dz;
+            s_x2y = s_x2y + wdx2 * dy;
+            s_x2z = s_x2z + wdx2 * dz;
+            s_xy2 = s_xy2 + wdy2 * dx;
+            s_xz2 = s_xz2 + wdz2 * dx;
+            s_y2z = s_y2z + wdy2 * dz;
+            s_yz2 = s_yz2 + wdz2 * dy;
+            s_xyz = s_xyz + wdx * dy * dz;
+
+            // Order 4
+            let wdx3 = wdx2 * dx;
+            let wdy3 = wdy2 * dy;
+            let wdz3 = wdz2 * dz;
+
+            s_x4 = s_x4 + wdx3 * dx;
+            s_y4 = s_y4 + wdy3 * dy;
+            s_z4 = s_z4 + wdz3 * dz;
+            s_x3y = s_x3y + wdx3 * dy;
+            s_x3z = s_x3z + wdx3 * dz;
+            s_xy3 = s_xy3 + wdy3 * dx;
+            s_xz3 = s_xz3 + wdz3 * dx;
+            s_yz3 = s_yz3 + wdz3 * dy;
+            s_y3z = s_y3z + wdy3 * dz;
+            s_x2y2 = s_x2y2 + wdx2 * dy2;
+            s_x2z2 = s_x2z2 + wdx2 * dz2;
+            s_y2z2 = s_y2z2 + wdy2 * dz2;
+            s_x2yz = s_x2yz + wdx2 * dy * dz;
+            s_xy2z = s_xy2z + wdy2 * dx * dz;
+            s_xyz2 = s_xyz2 + wdz2 * dx * dy;
+
+            // RHS
+            s_wy = s_wy + w * val;
+            s_wxy = s_wxy + wdx * val;
+            s_wyy = s_wyy + wdy * val;
+            s_wzy = s_wzy + wdz * val;
+
+            s_wx2y = s_wx2y + wdx2 * val;
+            s_wxyy = s_wxyy + wdx * dy * val;
+            s_wxzy = s_wxzy + wdx * dz * val;
+            s_wy2y = s_wy2y + wdy2 * val;
+            s_wyzy = s_wyzy + wdy * dz * val;
+            s_wz2y = s_wz2y + wdz2 * val;
         }
-
-        let idx = indices[i];
-        let dx = x[idx * 3] - query_x;
-        let dy = x[idx * 3 + 1] - query_y;
-        let dz = x[idx * 3 + 2] - query_z;
-        let val = y[idx];
-
-        let wdx = w * dx;
-        let wdy = w * dy;
-        let wdz = w * dz;
-
-        let dy2 = dy * dy;
-        let dz2 = dz * dz;
-
-        // Order 0, 1
-        s_w = s_w + w;
-        s_x = s_x + wdx;
-        s_y = s_y + wdy;
-        s_z = s_z + wdz;
-
-        // Order 2
-        s_x2 = s_x2 + wdx * dx;
-        s_y2 = s_y2 + wdy * dy;
-        s_z2 = s_z2 + wdz * dz;
-        s_xy = s_xy + wdx * dy;
-        s_xz = s_xz + wdx * dz;
-        s_yz = s_yz + wdy * dz;
-
-        // Order 3
-        let wdx2 = wdx * dx;
-        let wdy2 = wdy * dy;
-        let wdz2 = wdz * dz;
-
-        s_x3 = s_x3 + wdx2 * dx;
-        s_y3 = s_y3 + wdy2 * dy;
-        s_z3 = s_z3 + wdz2 * dz;
-        s_x2y = s_x2y + wdx2 * dy;
-        s_x2z = s_x2z + wdx2 * dz;
-        s_xy2 = s_xy2 + wdy2 * dx;
-        s_xz2 = s_xz2 + wdz2 * dx;
-        s_y2z = s_y2z + wdy2 * dz;
-        s_yz2 = s_yz2 + wdz2 * dy;
-        s_xyz = s_xyz + wdx * dy * dz;
-
-        // Order 4
-        let wdx3 = wdx2 * dx;
-        let wdy3 = wdy2 * dy;
-        let wdz3 = wdz2 * dz;
-
-        s_x4 = s_x4 + wdx3 * dx;
-        s_y4 = s_y4 + wdy3 * dy;
-        s_z4 = s_z4 + wdz3 * dz;
-        s_x3y = s_x3y + wdx3 * dy;
-        s_x3z = s_x3z + wdx3 * dz;
-        s_xy3 = s_xy3 + wdy3 * dx;
-        s_xz3 = s_xz3 + wdz3 * dx;
-        s_yz3 = s_yz3 + wdz3 * dy;
-        s_y3z = s_y3z + wdy3 * dz;
-        s_x2y2 = s_x2y2 + wdx2 * dy2;
-        s_x2z2 = s_x2z2 + wdx2 * dz2;
-        s_y2z2 = s_y2z2 + wdy2 * dz2;
-        s_x2yz = s_x2yz + wdx2 * dy * dz;
-        s_xy2z = s_xy2z + wdy2 * dx * dz;
-        s_xyz2 = s_xyz2 + wdz2 * dx * dy;
-
-        // RHS
-        s_wy = s_wy + w * val;
-        s_wxy = s_wxy + wdx * val;
-        s_wyy = s_wyy + wdy * val;
-        s_wzy = s_wzy + wdz * val;
-
-        s_wx2y = s_wx2y + wdx2 * val;
-        s_wxyy = s_wxyy + wdx * dy * val;
-        s_wxzy = s_wxzy + wdx * dz * val;
-        s_wy2y = s_wy2y + wdy2 * val;
-        s_wyzy = s_wyzy + wdy * dz * val;
-        s_wz2y = s_wz2y + wdz2 * val;
     }
 
     // Fill Matrix (10x10)
@@ -595,87 +612,96 @@ pub fn accumulate_3d_quadratic_simd(
     let qz = f64x2::splat(query_z);
 
     let mut i = 0;
-    while i + 2 <= n {
-        let idx0 = indices[i];
-        let idx1 = indices[i + 1];
+    // SAFETY: Use unchecked access for performance. Invariants guaranteed by KD-tree.
+    unsafe {
+        while i + 2 <= n {
+            let idx0 = *indices.get_unchecked(i);
+            let idx1 = *indices.get_unchecked(i + 1);
 
-        let w = f64x2::new([weights[i], weights[i + 1]]);
-        let px = f64x2::new([x[idx0 * 3], x[idx1 * 3]]);
-        let py = f64x2::new([x[idx0 * 3 + 1], x[idx1 * 3 + 1]]);
-        let pz = f64x2::new([x[idx0 * 3 + 2], x[idx1 * 3 + 2]]);
-        let val = f64x2::new([y[idx0], y[idx1]]);
+            let w = f64x2::new([*weights.get_unchecked(i), *weights.get_unchecked(i + 1)]);
+            let px = f64x2::new([*x.get_unchecked(idx0 * 3), *x.get_unchecked(idx1 * 3)]);
+            let py = f64x2::new([
+                *x.get_unchecked(idx0 * 3 + 1),
+                *x.get_unchecked(idx1 * 3 + 1),
+            ]);
+            let pz = f64x2::new([
+                *x.get_unchecked(idx0 * 3 + 2),
+                *x.get_unchecked(idx1 * 3 + 2),
+            ]);
+            let val = f64x2::new([*y.get_unchecked(idx0), *y.get_unchecked(idx1)]);
 
-        let dx = px - qx;
-        let dy = py - qy;
-        let dz = pz - qz;
+            let dx = px - qx;
+            let dy = py - qy;
+            let dz = pz - qz;
 
-        let wdx = w * dx;
-        let wdy = w * dy;
-        let wdz = w * dz;
+            let wdx = w * dx;
+            let wdy = w * dy;
+            let wdz = w * dz;
 
-        let dy2 = dy * dy;
-        let dz2 = dz * dz;
+            let dy2 = dy * dy;
+            let dz2 = dz * dz;
 
-        s_w += w;
-        s_x += wdx;
-        s_y += wdy;
-        s_z += wdz;
+            s_w += w;
+            s_x += wdx;
+            s_y += wdy;
+            s_z += wdz;
 
-        s_x2 += wdx * dx;
-        s_y2 += wdy * dy;
-        s_z2 += wdz * dz;
-        s_xy += wdx * dy;
-        s_xz += wdx * dz;
-        s_yz += wdy * dz;
+            s_x2 += wdx * dx;
+            s_y2 += wdy * dy;
+            s_z2 += wdz * dz;
+            s_xy += wdx * dy;
+            s_xz += wdx * dz;
+            s_yz += wdy * dz;
 
-        let wdx2 = wdx * dx;
-        let wdy2 = wdy * dy;
-        let wdz2 = wdz * dz;
+            let wdx2 = wdx * dx;
+            let wdy2 = wdy * dy;
+            let wdz2 = wdz * dz;
 
-        s_x3 += wdx2 * dx;
-        s_y3 += wdy2 * dy;
-        s_z3 += wdz2 * dz;
-        s_x2y += wdx2 * dy;
-        s_x2z += wdx2 * dz;
-        s_xy2 += wdy2 * dx;
-        s_xz2 += wdz2 * dx;
-        s_y2z += wdy2 * dz;
-        s_yz2 += wdz2 * dy;
-        s_xyz += wdx * dy * dz;
+            s_x3 += wdx2 * dx;
+            s_y3 += wdy2 * dy;
+            s_z3 += wdz2 * dz;
+            s_x2y += wdx2 * dy;
+            s_x2z += wdx2 * dz;
+            s_xy2 += wdy2 * dx;
+            s_xz2 += wdz2 * dx;
+            s_y2z += wdy2 * dz;
+            s_yz2 += wdz2 * dy;
+            s_xyz += wdx * dy * dz;
 
-        let wdx3 = wdx2 * dx;
-        let wdy3 = wdy2 * dy;
-        let wdz3 = wdz2 * dz;
+            let wdx3 = wdx2 * dx;
+            let wdy3 = wdy2 * dy;
+            let wdz3 = wdz2 * dz;
 
-        s_x4 += wdx3 * dx;
-        s_y4 += wdy3 * dy;
-        s_z4 += wdz3 * dz;
-        s_x3y += wdx3 * dy;
-        s_x3z += wdx3 * dz;
-        s_xy3 += wdy3 * dx;
-        s_xz3 += wdz3 * dx;
-        s_yz3 += wdz3 * dy;
-        s_y3z += wdy3 * dz;
-        s_x2y2 += wdx2 * dy2;
-        s_x2z2 += wdx2 * dz2;
-        s_y2z2 += wdy2 * dz2;
-        s_x2yz += wdx2 * dy * dz;
-        s_xy2z += wdy2 * dx * dz;
-        s_xyz2 += wdz2 * dx * dy;
+            s_x4 += wdx3 * dx;
+            s_y4 += wdy3 * dy;
+            s_z4 += wdz3 * dz;
+            s_x3y += wdx3 * dy;
+            s_x3z += wdx3 * dz;
+            s_xy3 += wdy3 * dx;
+            s_xz3 += wdz3 * dx;
+            s_yz3 += wdz3 * dy;
+            s_y3z += wdy3 * dz;
+            s_x2y2 += wdx2 * dy2;
+            s_x2z2 += wdx2 * dz2;
+            s_y2z2 += wdy2 * dz2;
+            s_x2yz += wdx2 * dy * dz;
+            s_xy2z += wdy2 * dx * dz;
+            s_xyz2 += wdz2 * dx * dy;
 
-        s_wy += w * val;
-        s_wxy += wdx * val;
-        s_wyy += wdy * val;
-        s_wzy += wdz * val;
+            s_wy += w * val;
+            s_wxy += wdx * val;
+            s_wyy += wdy * val;
+            s_wzy += wdz * val;
 
-        s_wx2y += wdx2 * val;
-        s_wxyy += wdx * dy * val;
-        s_wxzy += wdx * dz * val;
-        s_wy2y += wdy2 * val;
-        s_wyzy += wdy * dz * val;
-        s_wz2y += wdz2 * val;
+            s_wx2y += wdx2 * val;
+            s_wxyy += wdx * dy * val;
+            s_wxzy += wdx * dz * val;
+            s_wy2y += wdy2 * val;
+            s_wyzy += wdy * dz * val;
+            s_wz2y += wdz2 * val;
 
-        i += 2;
+            i += 2;
+        }
     }
 
     let mut a_w = s_w.reduce_add();
@@ -725,83 +751,85 @@ pub fn accumulate_3d_quadratic_simd(
     let mut a_wyzy = s_wyzy.reduce_add();
     let mut a_wz2y = s_wz2y.reduce_add();
 
-    for k in i..n {
-        let w = weights[k];
-        if w <= f64::EPSILON {
-            continue;
+    unsafe {
+        for k in i..n {
+            let w = *weights.get_unchecked(k);
+            if w <= f64::EPSILON {
+                continue;
+            }
+
+            let idx = *indices.get_unchecked(k);
+            let dx = *x.get_unchecked(idx * 3) - query_x;
+            let dy = *x.get_unchecked(idx * 3 + 1) - query_y;
+            let dz = *x.get_unchecked(idx * 3 + 2) - query_z;
+            let val = *y.get_unchecked(idx);
+
+            let wdx = w * dx;
+            let wdy = w * dy;
+            let wdz = w * dz;
+
+            let dy2 = dy * dy;
+            let dz2 = dz * dz;
+
+            a_w += w;
+            a_x += wdx;
+            a_y += wdy;
+            a_z += wdz;
+
+            a_x2 += wdx * dx;
+            a_y2 += wdy * dy;
+            a_z2 += wdz * dz;
+            a_xy += wdx * dy;
+            a_xz += wdx * dz;
+            a_yz += wdy * dz;
+
+            let wdx2 = wdx * dx;
+            let wdy2 = wdy * dy;
+            let wdz2 = wdz * dz;
+
+            a_x3 += wdx2 * dx;
+            a_y3 += wdy2 * dy;
+            a_z3 += wdz2 * dz;
+            a_x2y += wdx2 * dy;
+            a_x2z += wdx2 * dz;
+            a_xy2 += wdy2 * dx;
+            a_xz2 += wdz2 * dx;
+            a_y2z += wdy2 * dz;
+            a_yz2 += wdz2 * dy;
+            a_xyz += wdx * dy * dz;
+
+            let wdx3 = wdx2 * dx;
+            let wdy3 = wdy2 * dy;
+            let wdz3 = wdz2 * dz;
+
+            a_x4 += wdx3 * dx;
+            a_y4 += wdy3 * dy;
+            a_z4 += wdz3 * dz;
+            a_x3y += wdx3 * dy;
+            a_x3z += wdx3 * dz;
+            a_xy3 += wdy3 * dx;
+            a_xz3 += wdz3 * dx;
+            a_yz3 += wdz3 * dy;
+            a_y3z += wdy3 * dz;
+            a_x2y2 += wdx2 * dy2;
+            a_x2z2 += wdx2 * dz2;
+            a_y2z2 += wdy2 * dz2;
+            a_x2yz += wdx2 * dy * dz;
+            a_xy2z += wdy2 * dx * dz;
+            a_xyz2 += wdz2 * dx * dy;
+
+            a_wy += w * val;
+            a_wxy += wdx * val;
+            a_wyy += wdy * val;
+            a_wzy += wdz * val;
+
+            a_wx2y += wdx2 * val;
+            a_wxyy += wdx * dy * val;
+            a_wxzy += wdx * dz * val;
+            a_wy2y += wdy2 * val;
+            a_wyzy += wdy * dz * val;
+            a_wz2y += wdz2 * val;
         }
-
-        let idx = indices[k];
-        let dx = x[idx * 3] - query_x;
-        let dy = x[idx * 3 + 1] - query_y;
-        let dz = x[idx * 3 + 2] - query_z;
-        let val = y[idx];
-
-        let wdx = w * dx;
-        let wdy = w * dy;
-        let wdz = w * dz;
-
-        let dy2 = dy * dy;
-        let dz2 = dz * dz;
-
-        a_w += w;
-        a_x += wdx;
-        a_y += wdy;
-        a_z += wdz;
-
-        a_x2 += wdx * dx;
-        a_y2 += wdy * dy;
-        a_z2 += wdz * dz;
-        a_xy += wdx * dy;
-        a_xz += wdx * dz;
-        a_yz += wdy * dz;
-
-        let wdx2 = wdx * dx;
-        let wdy2 = wdy * dy;
-        let wdz2 = wdz * dz;
-
-        a_x3 += wdx2 * dx;
-        a_y3 += wdy2 * dy;
-        a_z3 += wdz2 * dz;
-        a_x2y += wdx2 * dy;
-        a_x2z += wdx2 * dz;
-        a_xy2 += wdy2 * dx;
-        a_xz2 += wdz2 * dx;
-        a_y2z += wdy2 * dz;
-        a_yz2 += wdz2 * dy;
-        a_xyz += wdx * dy * dz;
-
-        let wdx3 = wdx2 * dx;
-        let wdy3 = wdy2 * dy;
-        let wdz3 = wdz2 * dz;
-
-        a_x4 += wdx3 * dx;
-        a_y4 += wdy3 * dy;
-        a_z4 += wdz3 * dz;
-        a_x3y += wdx3 * dy;
-        a_x3z += wdx3 * dz;
-        a_xy3 += wdy3 * dx;
-        a_xz3 += wdz3 * dx;
-        a_yz3 += wdz3 * dy;
-        a_y3z += wdy3 * dz;
-        a_x2y2 += wdx2 * dy2;
-        a_x2z2 += wdx2 * dz2;
-        a_y2z2 += wdy2 * dz2;
-        a_x2yz += wdx2 * dy * dz;
-        a_xy2z += wdy2 * dx * dz;
-        a_xyz2 += wdz2 * dx * dy;
-
-        a_wy += w * val;
-        a_wxy += wdx * val;
-        a_wyy += wdy * val;
-        a_wzy += wdz * val;
-
-        a_wx2y += wdx2 * val;
-        a_wxyy += wdx * dy * val;
-        a_wxzy += wdx * dz * val;
-        a_wy2y += wdy2 * val;
-        a_wyzy += wdy * dz * val;
-        a_wz2y += wdz2 * val;
     }
 
     xtwx[0] = a_w;

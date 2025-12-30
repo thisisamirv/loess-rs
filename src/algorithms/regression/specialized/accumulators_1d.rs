@@ -30,20 +30,23 @@ pub fn accumulate_1d_linear_scalar<T: Float>(
     let mut s_wy = T::zero();
     let mut s_wdxy = T::zero();
 
-    for i in 0..n {
-        let w = weights[i];
-        if w <= T::epsilon() {
-            continue;
+    // SAFETY: Invariants guaranteed by KD-tree.
+    unsafe {
+        for i in 0..n {
+            let w = *weights.get_unchecked(i);
+            if w <= T::epsilon() {
+                continue;
+            }
+            let idx = *indices.get_unchecked(i);
+            let dx = *x.get_unchecked(idx) - query;
+            let y_val = *y.get_unchecked(idx);
+            let wdx = w * dx;
+            s_w = s_w + w;
+            s_dx = s_dx + wdx;
+            s_dx2 = s_dx2 + wdx * dx;
+            s_wy = s_wy + w * y_val;
+            s_wdxy = s_wdxy + wdx * y_val;
         }
-        let idx = indices[i];
-        let dx = x[idx] - query;
-        let y_val = y[idx];
-        let wdx = w * dx;
-        s_w = s_w + w;
-        s_dx = s_dx + wdx;
-        s_dx2 = s_dx2 + wdx * dx;
-        s_wy = s_wy + w * y_val;
-        s_wdxy = s_wdxy + wdx * y_val;
     }
     xtwx[0] = s_w;
     xtwx[1] = s_dx;
@@ -157,28 +160,31 @@ pub fn accumulate_1d_quadratic_scalar<T: Float>(
     let mut s_wdx_y = T::zero();
     let mut s_wdx2_y = T::zero();
 
-    for i in 0..n {
-        let w = weights[i];
-        if w <= T::epsilon() {
-            continue;
+    // SAFETY: Invariants guaranteed by KD-tree.
+    unsafe {
+        for i in 0..n {
+            let w = *weights.get_unchecked(i);
+            if w <= T::epsilon() {
+                continue;
+            }
+            let idx = *indices.get_unchecked(i);
+            let dx = *x.get_unchecked(idx) - query;
+            let y_val = *y.get_unchecked(idx);
+            let dx2 = dx * dx;
+
+            let wdx = w * dx;
+            let wdx2 = w * dx2;
+
+            s_w = s_w + w;
+            s_dx = s_dx + wdx;
+            s_dx2 = s_dx2 + wdx2;
+            s_dx3 = s_dx3 + wdx2 * dx;
+            s_dx4 = s_dx4 + wdx2 * dx2;
+
+            s_wy = s_wy + w * y_val;
+            s_wdx_y = s_wdx_y + wdx * y_val;
+            s_wdx2_y = s_wdx2_y + wdx2 * y_val;
         }
-        let idx = indices[i];
-        let dx = x[idx] - query;
-        let y_val = y[idx];
-        let dx2 = dx * dx;
-
-        let wdx = w * dx;
-        let wdx2 = w * dx2;
-
-        s_w = s_w + w;
-        s_dx = s_dx + wdx;
-        s_dx2 = s_dx2 + wdx2;
-        s_dx3 = s_dx3 + wdx2 * dx;
-        s_dx4 = s_dx4 + wdx2 * dx2;
-
-        s_wy = s_wy + w * y_val;
-        s_wdx_y = s_wdx_y + wdx * y_val;
-        s_wdx2_y = s_wdx2_y + wdx2 * y_val;
     }
 
     // Matrix X'WX (symmetric)
@@ -333,33 +339,36 @@ pub fn accumulate_1d_cubic_scalar<T: Float>(
     let mut s_wdx2_y = T::zero();
     let mut s_wdx3_y = T::zero();
 
-    for i in 0..n {
-        let w = weights[i];
-        if w <= T::epsilon() {
-            continue;
+    // SAFETY: Invariants guaranteed by KD-tree.
+    unsafe {
+        for i in 0..n {
+            let w = *weights.get_unchecked(i);
+            if w <= T::epsilon() {
+                continue;
+            }
+            let idx = *indices.get_unchecked(i);
+            let dx = *x.get_unchecked(idx) - query;
+            let y_val = *y.get_unchecked(idx);
+            let dx2 = dx * dx;
+            let dx3 = dx2 * dx;
+
+            let wdx = w * dx;
+            let wdx2 = w * dx2;
+            let wdx3 = w * dx3;
+
+            s_w = s_w + w;
+            s_dx = s_dx + wdx;
+            s_dx2 = s_dx2 + wdx2;
+            s_dx3 = s_dx3 + wdx3;
+            s_dx4 = s_dx4 + wdx3 * dx;
+            s_dx5 = s_dx5 + wdx3 * dx2;
+            s_dx6 = s_dx6 + wdx3 * dx3;
+
+            s_wy = s_wy + w * y_val;
+            s_wdx_y = s_wdx_y + wdx * y_val;
+            s_wdx2_y = s_wdx2_y + wdx2 * y_val;
+            s_wdx3_y = s_wdx3_y + wdx3 * y_val;
         }
-        let idx = indices[i];
-        let dx = x[idx] - query;
-        let y_val = y[idx];
-        let dx2 = dx * dx;
-        let dx3 = dx2 * dx;
-
-        let wdx = w * dx;
-        let wdx2 = w * dx2;
-        let wdx3 = w * dx3;
-
-        s_w = s_w + w;
-        s_dx = s_dx + wdx;
-        s_dx2 = s_dx2 + wdx2;
-        s_dx3 = s_dx3 + wdx3;
-        s_dx4 = s_dx4 + wdx3 * dx;
-        s_dx5 = s_dx5 + wdx3 * dx2;
-        s_dx6 = s_dx6 + wdx3 * dx3;
-
-        s_wy = s_wy + w * y_val;
-        s_wdx_y = s_wdx_y + wdx * y_val;
-        s_wdx2_y = s_wdx2_y + wdx2 * y_val;
-        s_wdx3_y = s_wdx3_y + wdx3 * y_val;
     }
 
     // Matrix X'WX (symmetric)
@@ -419,36 +428,39 @@ pub fn accumulate_1d_cubic_simd(
 
     let q = f64x2::splat(query);
 
-    while i + 2 <= n {
-        let idx0 = indices[i];
-        let idx1 = indices[i + 1];
+    // SAFETY: Use unchecked access for performance. Invariants guaranteed by KD-tree.
+    unsafe {
+        while i + 2 <= n {
+            let idx0 = *indices.get_unchecked(i);
+            let idx1 = *indices.get_unchecked(i + 1);
 
-        let w = f64x2::new([weights[i], weights[i + 1]]);
-        let x_val = f64x2::new([x[idx0], x[idx1]]);
-        let y_val = f64x2::new([y[idx0], y[idx1]]);
+            let w = f64x2::new([*weights.get_unchecked(i), *weights.get_unchecked(i + 1)]);
+            let x_val = f64x2::new([*x.get_unchecked(idx0), *x.get_unchecked(idx1)]);
+            let y_val = f64x2::new([*y.get_unchecked(idx0), *y.get_unchecked(idx1)]);
 
-        let dx = x_val - q;
-        let dx2 = dx * dx;
-        let dx3 = dx2 * dx;
+            let dx = x_val - q;
+            let dx2 = dx * dx;
+            let dx3 = dx2 * dx;
 
-        let wdx = w * dx;
-        let wdx2 = w * dx2;
-        let wdx3 = w * dx3;
+            let wdx = w * dx;
+            let wdx2 = w * dx2;
+            let wdx3 = w * dx3;
 
-        s_w += w;
-        s_dx += wdx;
-        s_dx2 += wdx2;
-        s_dx3 += wdx3;
-        s_dx4 += wdx3 * dx;
-        s_dx5 += wdx3 * dx2;
-        s_dx6 += wdx3 * dx3;
+            s_w += w;
+            s_dx += wdx;
+            s_dx2 += wdx2;
+            s_dx3 += wdx3;
+            s_dx4 += wdx3 * dx;
+            s_dx5 += wdx3 * dx2;
+            s_dx6 += wdx3 * dx3;
 
-        s_wy += w * y_val;
-        s_wdx_y += wdx * y_val;
-        s_wdx2_y += wdx2 * y_val;
-        s_wdx3_y += wdx3 * y_val;
+            s_wy += w * y_val;
+            s_wdx_y += wdx * y_val;
+            s_wdx2_y += wdx2 * y_val;
+            s_wdx3_y += wdx3 * y_val;
 
-        i += 2;
+            i += 2;
+        }
     }
 
     let mut a_w = s_w.reduce_add();
@@ -465,34 +477,36 @@ pub fn accumulate_1d_cubic_simd(
     let mut a_wdx3_y = s_wdx3_y.reduce_add();
 
     // Tail
-    for k in i..n {
-        let w = weights[k];
-        if w <= f64::EPSILON {
-            continue;
+    unsafe {
+        for k in i..n {
+            let w = *weights.get_unchecked(k);
+            if w <= f64::EPSILON {
+                continue;
+            }
+
+            let idx = *indices.get_unchecked(k);
+            let dx = *x.get_unchecked(idx) - query;
+            let y_val = *y.get_unchecked(idx);
+            let dx2 = dx * dx;
+            let dx3 = dx2 * dx;
+
+            let wdx = w * dx;
+            let wdx2 = w * dx2;
+            let wdx3 = w * dx3;
+
+            a_w += w;
+            a_dx += wdx;
+            a_dx2 += wdx2;
+            a_dx3 += wdx3;
+            a_dx4 += wdx3 * dx;
+            a_dx5 += wdx3 * dx2;
+            a_dx6 += wdx3 * dx3;
+
+            a_wy += w * y_val;
+            a_wdx_y += wdx * y_val;
+            a_wdx2_y += wdx2 * y_val;
+            a_wdx3_y += wdx3 * y_val;
         }
-
-        let idx = indices[k];
-        let dx = x[idx] - query;
-        let y_val = y[idx];
-        let dx2 = dx * dx;
-        let dx3 = dx2 * dx;
-
-        let wdx = w * dx;
-        let wdx2 = w * dx2;
-        let wdx3 = w * dx3;
-
-        a_w += w;
-        a_dx += wdx;
-        a_dx2 += wdx2;
-        a_dx3 += wdx3;
-        a_dx4 += wdx3 * dx;
-        a_dx5 += wdx3 * dx2;
-        a_dx6 += wdx3 * dx3;
-
-        a_wy += w * y_val;
-        a_wdx_y += wdx * y_val;
-        a_wdx2_y += wdx2 * y_val;
-        a_wdx3_y += wdx3 * y_val;
     }
 
     xtwx[0] = a_w;
