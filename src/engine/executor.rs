@@ -63,9 +63,7 @@ use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::{DistanceLinalg, DistanceMetric};
 use crate::math::kernel::WeightFunction;
 use crate::math::linalg::FloatLinalg;
-use crate::math::neighborhood::{
-    KDTree, Neighborhood, NodeDistance, PointDistance, floyd_rivest_select,
-};
+use crate::math::neighborhood::{KDTree, Neighborhood, NodeDistance, PointDistance};
 use crate::math::scaling::ScalingMethod;
 use crate::primitives::backend::Backend;
 use crate::primitives::buffer::{FittingBuffer, LoessBuffer, NeighborhoodSearchBuffer};
@@ -1037,9 +1035,11 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 );
                 let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
                 let median_idx = n / 2;
-                floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {
-                    a.partial_cmp(b).unwrap_or(Equal)
-                });
+                if median_idx < sorted_residuals.len() {
+                    sorted_residuals.select_nth_unstable_by(median_idx, |a: &T, b| {
+                        a.partial_cmp(b).unwrap_or(Equal)
+                    });
+                }
                 let median_residual = sorted_residuals[median_idx];
                 let sigma = median_residual * T::from(1.4826).unwrap();
 
@@ -1056,9 +1056,11 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 );
                 let mut sorted_residuals = workspace.executor_buffer.residuals.clone();
                 let median_idx = n / 2;
-                floyd_rivest_select(&mut sorted_residuals, median_idx, |a: &T, b| {
-                    a.partial_cmp(b).unwrap_or(Equal)
-                });
+                if median_idx < sorted_residuals.len() {
+                    sorted_residuals.select_nth_unstable_by(median_idx, |a: &T, b| {
+                        a.partial_cmp(b).unwrap_or(Equal)
+                    });
+                }
                 let median_residual = sorted_residuals[median_idx];
                 let sigma = median_residual * T::from(1.4826).unwrap();
 

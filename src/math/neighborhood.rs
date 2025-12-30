@@ -41,111 +41,6 @@ use num_traits::Float;
 use crate::primitives::buffer::{NeighborhoodSearchBuffer, NeighborhoodStorage};
 
 // ============================================================================
-// Selection Algorithm (Floyd-Rivest)
-// ============================================================================
-
-/// Selects the k-th smallest element in `arr` and partitions the array around it.
-///
-/// Post-condition:
-/// - `arr[k]` contains the k-th smallest element.
-/// - All elements `arr[0..k]` are <= `arr[k]`.
-/// - All elements `arr[k+1..]` are >= `arr[k]`.
-pub fn floyd_rivest_select<T, F>(arr: &mut [T], k: usize, mut cmp: F)
-where
-    F: FnMut(&T, &T) -> Ordering,
-{
-    assert!(k < arr.len(), "k must be less than arr.len()");
-    if arr.is_empty() {
-        return;
-    }
-    floyd_rivest_recursive(arr, 0, arr.len() - 1, k, &mut cmp);
-}
-
-/// Recursive helper for Floyd-Rivest selection.
-///
-/// Adapted from CACM Algorithm 489.
-fn floyd_rivest_recursive<T, F>(
-    arr: &mut [T],
-    mut left: usize,
-    mut right: usize,
-    k: usize,
-    cmp: &mut F,
-) where
-    F: FnMut(&T, &T) -> Ordering,
-{
-    while right > left {
-        // Use sampling heuristic for large ranges to pick a better pivot
-        if right - left > 600 {
-            let n = (right - left + 1) as f64;
-            let i = (k - left + 1) as f64;
-            let z = n.ln();
-            let s = 0.5 * (2.0 * z / 3.0).exp();
-            let sign = if i - n / 2.0 < 0.0 { -1.0 } else { 1.0 };
-            let sd = 0.5 * (z * s * (n - s) / n).sqrt() * sign;
-
-            let new_left = (left as f64).max((k as f64) - i * s / n + sd) as usize;
-            let new_right = (right as f64).min((k as f64) + (n - i) * s / n + sd) as usize;
-
-            floyd_rivest_recursive(arr, new_left, new_right, k, cmp);
-        }
-
-        // Partition around arr[k] (which was updated by recursive call if sampled)
-        let t_idx = k;
-
-        // Swap pivot to left to start partition
-        arr.swap(left, t_idx);
-
-        // Ensure arr[left] <= arr[right] to simplify partition
-        if cmp(&arr[right], &arr[left]) == Ordering::Less {
-            arr.swap(left, right);
-        }
-
-        if arr[left + 1..=right - 1].is_empty() {
-            // Only 2 elements, and we just sorted them. simple case done.
-        }
-
-        // Hoare-like partition
-        let mut i_ptr = left + 1;
-        let mut j_ptr = right - 1;
-
-        loop {
-            // Find element >= pivot from left
-            while i_ptr <= j_ptr && cmp(&arr[i_ptr], &arr[left]) == Ordering::Less {
-                i_ptr += 1;
-            }
-            // Find element <= pivot from right
-            while j_ptr >= i_ptr && cmp(&arr[j_ptr], &arr[left]) == Ordering::Greater {
-                j_ptr -= 1;
-            }
-
-            if i_ptr >= j_ptr {
-                break;
-            }
-
-            arr.swap(i_ptr, j_ptr);
-            i_ptr += 1;
-            // j_ptr might underflow if usize, but logic guarantees j_ptr >= i_ptr start
-            j_ptr = j_ptr.saturating_sub(1);
-        }
-
-        // Swap pivot into correct place (j_ptr)
-        arr.swap(left, j_ptr);
-        let pivot_pos = j_ptr;
-
-        // Adjust bounds
-        if k <= pivot_pos {
-            if pivot_pos == 0 {
-                break;
-            } // prevent underflow
-            right = pivot_pos - 1;
-        }
-        if k >= pivot_pos {
-            left = pivot_pos + 1;
-        }
-    }
-}
-
-// ============================================================================
 // Helper Structures
 // ============================================================================
 
@@ -352,13 +247,15 @@ impl<T: Float> KDTree<T> {
 
         let axis = depth % dims;
 
-        // Floyd-Rivest selection (O(N)) to find median and partition
+        // Select median using unstable partitioning
         let median_idx = indices.len() / 2;
-        floyd_rivest_select(indices, median_idx, |&a, &b| {
-            points[a * dims + axis]
-                .partial_cmp(&points[b * dims + axis])
-                .unwrap_or(Equal)
-        });
+        if median_idx < indices.len() {
+            indices.select_nth_unstable_by(median_idx, |&a, &b| {
+                points[a * dims + axis]
+                    .partial_cmp(&points[b * dims + axis])
+                    .unwrap_or(Equal)
+            });
+        }
 
         let median_idx = indices.len() / 2;
         let point_idx = indices[median_idx];
