@@ -84,17 +84,6 @@ pub struct LoessDistanceCalculator<'a, T: FloatLinalg + DistanceLinalg + SolverL
 impl<'a, T: FloatLinalg + DistanceLinalg + SolverLinalg> PointDistance<T>
     for LoessDistanceCalculator<'a, T>
 {
-    fn distance(&self, a: &[T], b: &[T]) -> T {
-        match &self.metric {
-            DistanceMetric::Normalized => DistanceMetric::normalized(a, b, self.scales),
-            DistanceMetric::Euclidean => DistanceMetric::euclidean(a, b),
-            DistanceMetric::Manhattan => DistanceMetric::manhattan(a, b),
-            DistanceMetric::Chebyshev => DistanceMetric::chebyshev(a, b),
-            DistanceMetric::Minkowski(p) => DistanceMetric::minkowski(a, b, *p),
-            DistanceMetric::Weighted(w) => DistanceMetric::weighted(a, b, w),
-        }
-    }
-
     fn split_distance(&self, dim: usize, split_val: T, query_val: T) -> T {
         let diff = (query_val - split_val).abs();
         match &self.metric {
@@ -105,6 +94,40 @@ impl<'a, T: FloatLinalg + DistanceLinalg + SolverLinalg> PointDistance<T>
             DistanceMetric::Minkowski(_) => diff,
             DistanceMetric::Weighted(w) => diff * w[dim].sqrt(),
         }
+    }
+
+    fn distance_squared(&self, a: &[T], b: &[T]) -> T {
+        match &self.metric {
+            DistanceMetric::Normalized => DistanceMetric::normalized_squared(a, b, self.scales),
+            DistanceMetric::Euclidean => DistanceMetric::euclidean_squared(a, b),
+            DistanceMetric::Weighted(w) => DistanceMetric::weighted_squared(a, b, w),
+            DistanceMetric::Manhattan => DistanceMetric::manhattan_squared(a, b),
+            DistanceMetric::Chebyshev => DistanceMetric::chebyshev_squared(a, b),
+            DistanceMetric::Minkowski(p) => DistanceMetric::minkowski_squared(a, b, *p),
+        }
+    }
+
+    fn split_distance_squared(&self, dim: usize, split_val: T, query_val: T) -> T {
+        let diff = query_val - split_val;
+        match &self.metric {
+            DistanceMetric::Normalized => {
+                let d = diff * self.scales[dim];
+                d * d
+            }
+            DistanceMetric::Euclidean => diff * diff,
+            DistanceMetric::Weighted(w) => diff * diff * w[dim],
+            // Squaring the linear split distance |diff| is valid for comparison
+            // against squared total distances due to monotonicity.
+            _ => {
+                let d = self.split_distance(dim, split_val, query_val);
+                d * d
+            }
+        }
+    }
+
+    fn post_process_distance(&self, d: T) -> T {
+        // Get the linear distance from the squared distance
+        d.sqrt()
     }
 }
 

@@ -71,11 +71,18 @@ impl<T: PartialOrd> Ord for NodeDistance<T> {
 
 /// Trait for distance calculations used in KD-tree search.
 pub trait PointDistance<T: Float> {
-    /// Compute distance between two points.
-    fn distance(&self, a: &[T], b: &[T]) -> T;
+    /// Compute squared distance between two points (optimization to avoid sqrt).
+    fn distance_squared(&self, a: &[T], b: &[T]) -> T;
 
     /// Compute distance along a single dimension (for pruning).
     fn split_distance(&self, dim: usize, split_val: T, query_val: T) -> T;
+
+    /// Compute squared distance along a single dimension.
+    fn split_distance_squared(&self, dim: usize, split_val: T, query_val: T) -> T;
+
+    /// Convert a distance from the comparison space (e.g., squared) to the actual metric space.
+    /// For Euclidean, this computes `sqrt`. For Manhattan, it is identity.
+    fn post_process_distance(&self, d: T) -> T;
 }
 
 // ============================================================================
@@ -225,9 +232,12 @@ impl<T: Float> KDTree<T> {
         neighborhood.distances.clear();
         for &NodeDistance(idx, dist) in buffer.heap.iter() {
             neighborhood.indices.push(idx);
-            neighborhood.distances.push(dist);
+            neighborhood
+                .distances
+                .push(dist_calc.post_process_distance(dist));
         }
-        neighborhood.max_distance = buffer.heap.peek().map(|nd| nd.1).unwrap_or(T::zero());
+        let raw_max = buffer.heap.peek().map(|nd| nd.1).unwrap_or(T::zero());
+        neighborhood.max_distance = dist_calc.post_process_distance(raw_max);
     }
 
     // ------------------------------------------------------------------------
@@ -368,7 +378,8 @@ impl<T: Float> KDTree<T> {
 
             // 1. Process current node distance
             if exclude_self != Some(node.index) {
-                let dist = dist_calc.distance(query, node_point);
+                // OPTIMIZATION: Use squared distance to avoid sqrt in hot loop
+                let dist = dist_calc.distance_squared(query, node_point);
 
                 if !heap_full {
                     heap.push(NodeDistance(node.index, dist));
@@ -415,7 +426,7 @@ impl<T: Float> KDTree<T> {
             // 3. Pruning: Only push valid Far children if they can contain closer points
             if has_far {
                 let dist_to_plane =
-                    dist_calc.split_distance(split_dim, split_val, query[split_dim]);
+                    dist_calc.split_distance_squared(split_dim, split_val, query[split_dim]);
                 if !heap_full || dist_to_plane < max_dist {
                     stack.push(far_packed);
                 }

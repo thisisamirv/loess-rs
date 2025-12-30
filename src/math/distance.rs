@@ -59,6 +59,24 @@ pub trait DistanceLinalg: Float + 'static {
 
     /// Compute Minkowski distance (Lp norm): (Σ|xᵢ - yᵢ|^p)^(1/p)
     fn minkowski_distance(a: &[Self], b: &[Self], p: Self) -> Self;
+
+    /// Compute squared Euclidean distance (avoids sqrt).
+    fn euclidean_distance_squared(a: &[Self], b: &[Self]) -> Self;
+
+    /// Compute squared normalized Euclidean distance.
+    fn normalized_distance_squared(a: &[Self], b: &[Self], scales: &[Self]) -> Self;
+
+    /// Compute squared weighted Euclidean distance.
+    fn weighted_distance_squared(a: &[Self], b: &[Self], weights: &[Self]) -> Self;
+
+    /// Compute squared Manhattan distance.
+    fn manhattan_distance_squared(a: &[Self], b: &[Self]) -> Self;
+
+    /// Compute squared Chebyshev distance.
+    fn chebyshev_distance_squared(a: &[Self], b: &[Self]) -> Self;
+
+    /// Compute squared Minkowski distance.
+    fn minkowski_distance_squared(a: &[Self], b: &[Self], p: Self) -> Self;
 }
 
 impl DistanceLinalg for f64 {
@@ -86,6 +104,33 @@ impl DistanceLinalg for f64 {
     fn minkowski_distance(a: &[Self], b: &[Self], p: Self) -> Self {
         simd_distance::minkowski_f64(a, b, p)
     }
+    #[inline]
+    fn euclidean_distance_squared(a: &[Self], b: &[Self]) -> Self {
+        simd_distance::euclidean_sq_f64(a, b)
+    }
+    #[inline]
+    fn normalized_distance_squared(a: &[Self], b: &[Self], scales: &[Self]) -> Self {
+        simd_distance::normalized_sq_f64(a, b, scales)
+    }
+    #[inline]
+    fn weighted_distance_squared(a: &[Self], b: &[Self], weights: &[Self]) -> Self {
+        simd_distance::weighted_sq_f64(a, b, weights)
+    }
+    #[inline]
+    fn manhattan_distance_squared(a: &[Self], b: &[Self]) -> Self {
+        let d = simd_distance::manhattan_f64(a, b);
+        d * d
+    }
+    #[inline]
+    fn chebyshev_distance_squared(a: &[Self], b: &[Self]) -> Self {
+        let d = simd_distance::chebyshev_f64(a, b);
+        d * d
+    }
+    #[inline]
+    fn minkowski_distance_squared(a: &[Self], b: &[Self], p: Self) -> Self {
+        let d = simd_distance::minkowski_f64(a, b, p);
+        d * d
+    }
 }
 
 impl DistanceLinalg for f32 {
@@ -112,6 +157,33 @@ impl DistanceLinalg for f32 {
     #[inline]
     fn minkowski_distance(a: &[Self], b: &[Self], p: Self) -> Self {
         simd_distance::minkowski_f32(a, b, p)
+    }
+    #[inline]
+    fn euclidean_distance_squared(a: &[Self], b: &[Self]) -> Self {
+        simd_distance::euclidean_sq_f32(a, b)
+    }
+    #[inline]
+    fn normalized_distance_squared(a: &[Self], b: &[Self], scales: &[Self]) -> Self {
+        simd_distance::normalized_sq_f32(a, b, scales)
+    }
+    #[inline]
+    fn weighted_distance_squared(a: &[Self], b: &[Self], weights: &[Self]) -> Self {
+        simd_distance::weighted_sq_f32(a, b, weights)
+    }
+    #[inline]
+    fn manhattan_distance_squared(a: &[Self], b: &[Self]) -> Self {
+        let d = simd_distance::manhattan_f32(a, b);
+        d * d
+    }
+    #[inline]
+    fn chebyshev_distance_squared(a: &[Self], b: &[Self]) -> Self {
+        let d = simd_distance::chebyshev_f32(a, b);
+        d * d
+    }
+    #[inline]
+    fn minkowski_distance_squared(a: &[Self], b: &[Self], p: Self) -> Self {
+        let d = simd_distance::minkowski_f32(a, b, p);
+        d * d
     }
 }
 
@@ -190,6 +262,48 @@ impl<T: DistanceLinalg> DistanceMetric<T> {
         debug_assert_eq!(a.len(), weights.len());
         T::weighted_distance(a, b, weights)
     }
+
+    /// Compute Squared Euclidean distance.
+    #[inline]
+    pub fn euclidean_squared(a: &[T], b: &[T]) -> T {
+        debug_assert_eq!(a.len(), b.len());
+        T::euclidean_distance_squared(a, b)
+    }
+
+    /// Compute Squared Normalized Euclidean distance.
+    #[inline]
+    pub fn normalized_squared(a: &[T], b: &[T], scales: &[T]) -> T {
+        debug_assert_eq!(a.len(), b.len());
+        T::normalized_distance_squared(a, b, scales)
+    }
+
+    /// Compute Squared Weighted Euclidean distance.
+    #[inline]
+    pub fn weighted_squared(a: &[T], b: &[T], weights: &[T]) -> T {
+        debug_assert_eq!(a.len(), b.len());
+        T::weighted_distance_squared(a, b, weights)
+    }
+
+    /// Compute Squared Manhattan distance.
+    #[inline]
+    pub fn manhattan_squared(a: &[T], b: &[T]) -> T {
+        debug_assert_eq!(a.len(), b.len());
+        T::manhattan_distance_squared(a, b)
+    }
+
+    /// Compute Squared Chebyshev distance.
+    #[inline]
+    pub fn chebyshev_squared(a: &[T], b: &[T]) -> T {
+        debug_assert_eq!(a.len(), b.len());
+        T::chebyshev_distance_squared(a, b)
+    }
+
+    /// Compute Squared Minkowski distance.
+    #[inline]
+    pub fn minkowski_squared(a: &[T], b: &[T], p: T) -> T {
+        debug_assert_eq!(a.len(), b.len());
+        T::minkowski_distance_squared(a, b, p)
+    }
 }
 
 // ============================================================================
@@ -208,13 +322,19 @@ pub mod simd_distance {
     /// Processes 4 elements at a time using AVX/SSE2 instructions.
     #[inline]
     pub fn euclidean_f64(a: &[f64], b: &[f64]) -> f64 {
+        euclidean_sq_f64(a, b).sqrt()
+    }
+
+    /// SIMD-optimized squared Euclidean distance for f64 slices.
+    #[inline]
+    pub fn euclidean_sq_f64(a: &[f64], b: &[f64]) -> f64 {
         debug_assert_eq!(a.len(), b.len(), "Points must have same dimension");
 
         let n = a.len();
 
         // For small dimensions (1-3), use scalar path - no SIMD overhead
         if n < 4 {
-            return euclidean_scalar(a, b);
+            return euclidean_sq_scalar(a, b);
         }
 
         let chunks = n / 4;
@@ -242,20 +362,19 @@ pub mod simd_distance {
             total += diff * diff;
         }
 
-        total.sqrt()
+        total
     }
 
-    /// SIMD-optimized Euclidean distance for f32 slices.
-    /// Processes 8 elements at a time using AVX/SSE2 instructions.
+    /// SIMD-optimized squared Euclidean distance for f32 slices.
     #[inline]
-    pub fn euclidean_f32(a: &[f32], b: &[f32]) -> f32 {
+    pub fn euclidean_sq_f32(a: &[f32], b: &[f32]) -> f32 {
         debug_assert_eq!(a.len(), b.len(), "Points must have same dimension");
 
         let n = a.len();
 
         // For small dimensions, use scalar path
         if n < 8 {
-            return euclidean_scalar(a, b);
+            return euclidean_sq_scalar(a, b);
         }
 
         let chunks = n / 8;
@@ -301,7 +420,14 @@ pub mod simd_distance {
             total += diff * diff;
         }
 
-        total.sqrt()
+        total
+    }
+
+    /// SIMD-optimized Euclidean distance for f32 slices.
+    /// Processes 8 elements at a time using AVX/SSE2 instructions.
+    #[inline]
+    pub fn euclidean_f32(a: &[f32], b: &[f32]) -> f32 {
+        euclidean_sq_f32(a, b).sqrt()
     }
 
     // ========================================================================
@@ -311,13 +437,19 @@ pub mod simd_distance {
     /// SIMD-optimized normalized Euclidean distance for f64 slices.
     #[inline]
     pub fn normalized_f64(a: &[f64], b: &[f64], scales: &[f64]) -> f64 {
+        normalized_sq_f64(a, b, scales).sqrt()
+    }
+
+    /// SIMD-optimized squared normalized Euclidean distance for f64 slices.
+    #[inline]
+    pub fn normalized_sq_f64(a: &[f64], b: &[f64], scales: &[f64]) -> f64 {
         debug_assert_eq!(a.len(), b.len());
         debug_assert_eq!(a.len(), scales.len());
 
         let n = a.len();
 
         if n < 4 {
-            return normalized_scalar(a, b, scales);
+            return normalized_sq_scalar(a, b, scales);
         }
 
         let chunks = n / 4;
@@ -348,19 +480,25 @@ pub mod simd_distance {
             total += diff * diff;
         }
 
-        total.sqrt()
+        total
     }
 
     /// SIMD-optimized normalized Euclidean distance for f32 slices.
     #[inline]
     pub fn normalized_f32(a: &[f32], b: &[f32], scales: &[f32]) -> f32 {
+        normalized_sq_f32(a, b, scales).sqrt()
+    }
+
+    /// SIMD-optimized squared normalized Euclidean distance for f32 slices.
+    #[inline]
+    pub fn normalized_sq_f32(a: &[f32], b: &[f32], scales: &[f32]) -> f32 {
         debug_assert_eq!(a.len(), b.len());
         debug_assert_eq!(a.len(), scales.len());
 
         let n = a.len();
 
         if n < 8 {
-            return normalized_scalar(a, b, scales);
+            return normalized_sq_scalar(a, b, scales);
         }
 
         let chunks = n / 8;
@@ -413,7 +551,7 @@ pub mod simd_distance {
             total += diff * diff;
         }
 
-        total.sqrt()
+        total
     }
 
     // ========================================================================
@@ -423,13 +561,19 @@ pub mod simd_distance {
     /// SIMD-optimized weighted Euclidean distance for f64 slices.
     #[inline]
     pub fn weighted_f64(a: &[f64], b: &[f64], weights: &[f64]) -> f64 {
+        weighted_sq_f64(a, b, weights).sqrt()
+    }
+
+    /// SIMD-optimized squared weighted Euclidean distance for f64 slices.
+    #[inline]
+    pub fn weighted_sq_f64(a: &[f64], b: &[f64], weights: &[f64]) -> f64 {
         debug_assert_eq!(a.len(), b.len());
         debug_assert_eq!(a.len(), weights.len());
 
         let n = a.len();
 
         if n < 4 {
-            return weighted_scalar(a, b, weights);
+            return weighted_sq_scalar(a, b, weights);
         }
 
         let chunks = n / 4;
@@ -460,19 +604,19 @@ pub mod simd_distance {
             total += weights[base + i] * diff * diff;
         }
 
-        total.sqrt()
+        total
     }
 
-    /// SIMD-optimized weighted Euclidean distance for f32 slices.
+    /// SIMD-optimized squared weighted Euclidean distance for f32 slices.
     #[inline]
-    pub fn weighted_f32(a: &[f32], b: &[f32], weights: &[f32]) -> f32 {
+    pub fn weighted_sq_f32(a: &[f32], b: &[f32], weights: &[f32]) -> f32 {
         debug_assert_eq!(a.len(), b.len());
         debug_assert_eq!(a.len(), weights.len());
 
         let n = a.len();
 
         if n < 8 {
-            return weighted_scalar(a, b, weights);
+            return weighted_sq_scalar(a, b, weights);
         }
 
         let chunks = n / 8;
@@ -525,7 +669,13 @@ pub mod simd_distance {
             total += weights[base + i] * diff * diff;
         }
 
-        total.sqrt()
+        total
+    }
+
+    /// SIMD-optimized weighted Euclidean distance for f32 slices.
+    #[inline]
+    pub fn weighted_f32(a: &[f32], b: &[f32], weights: &[f32]) -> f32 {
+        weighted_sq_f32(a, b, weights).sqrt()
     }
 
     // ========================================================================
@@ -772,7 +922,7 @@ pub mod simd_distance {
     // ========================================================================
 
     #[inline]
-    fn euclidean_scalar<T: Float>(a: &[T], b: &[T]) -> T {
+    fn euclidean_sq_scalar<T: Float>(a: &[T], b: &[T]) -> T {
         a.iter()
             .zip(b.iter())
             .map(|(&ai, &bi)| {
@@ -780,11 +930,10 @@ pub mod simd_distance {
                 diff * diff
             })
             .fold(T::zero(), |acc, x| acc + x)
-            .sqrt()
     }
 
     #[inline]
-    fn normalized_scalar<T: Float>(a: &[T], b: &[T], scales: &[T]) -> T {
+    fn normalized_sq_scalar<T: Float>(a: &[T], b: &[T], scales: &[T]) -> T {
         a.iter()
             .zip(b.iter())
             .zip(scales.iter())
@@ -793,11 +942,10 @@ pub mod simd_distance {
                 diff * diff
             })
             .fold(T::zero(), |acc, x| acc + x)
-            .sqrt()
     }
 
     #[inline]
-    fn weighted_scalar<T: Float>(a: &[T], b: &[T], weights: &[T]) -> T {
+    fn weighted_sq_scalar<T: Float>(a: &[T], b: &[T], weights: &[T]) -> T {
         a.iter()
             .zip(b.iter())
             .zip(weights.iter())
@@ -806,7 +954,6 @@ pub mod simd_distance {
                 w * diff * diff
             })
             .fold(T::zero(), |acc, x| acc + x)
-            .sqrt()
     }
 
     #[inline]
