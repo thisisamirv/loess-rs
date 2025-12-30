@@ -33,7 +33,6 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 // External dependencies
-use core::cmp::Ordering;
 use num_traits::Float;
 use wide::{f32x8, f64x4};
 
@@ -190,69 +189,6 @@ impl<T: DistanceLinalg> DistanceMetric<T> {
         debug_assert_eq!(a.len(), b.len());
         debug_assert_eq!(a.len(), weights.len());
         T::weighted_distance(a, b, weights)
-    }
-
-    /// Compute robust normalization scales using 10% trimmed standard deviation.
-    pub fn compute_robust_scales(points: &[T], dimensions: usize) -> Vec<T> {
-        let n = points.len() / dimensions;
-        if n < 10 {
-            // Fallback for very small datasets: use simple range or 1.0
-            return vec![T::one(); dimensions];
-        }
-
-        let cut = (T::from(0.1).unwrap() * T::from(n).unwrap())
-            .ceil()
-            .to_usize()
-            .unwrap();
-        // Ensure we don't trim everything
-        let effective_n = n.saturating_sub(2 * cut);
-        if effective_n < 2 {
-            return vec![T::one(); dimensions];
-        }
-
-        let mut scales = Vec::with_capacity(dimensions);
-        let mut temp = Vec::with_capacity(n);
-
-        for d in 0..dimensions {
-            // Extract dimension d
-            temp.clear();
-            for i in 0..n {
-                temp.push(points[i * dimensions + d]);
-            }
-
-            // Sort
-            temp.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-
-            // Compute trimmed mean
-            let sum: T = temp
-                .iter()
-                .skip(cut)
-                .take(effective_n)
-                .fold(T::zero(), |acc, &val| acc + val);
-            let mean = sum / T::from(effective_n).unwrap();
-
-            // Compute trimmed sum of squares
-            let sum_sq: T = temp
-                .iter()
-                .skip(cut)
-                .take(effective_n)
-                .map(|&val| {
-                    let diff = val - mean;
-                    diff * diff
-                })
-                .fold(T::zero(), |acc, val| acc + val);
-
-            // Compute standard deviation (divisor = N_eff - 1)
-            let variance = sum_sq / T::from(effective_n - 1).unwrap();
-            let std_dev = variance.sqrt();
-
-            if std_dev > T::epsilon() {
-                scales.push(T::one() / std_dev);
-            } else {
-                scales.push(T::zero()); // Ignore constant dimension
-            }
-        }
-        scales
     }
 }
 

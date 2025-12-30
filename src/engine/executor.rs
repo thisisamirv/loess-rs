@@ -623,7 +623,32 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     Some(|train_x: &[T], train_y: &[T], test_x: &[T], f: T| {
                         let n_train = train_y.len();
                         let window_size = Window::calculate_span(n_train, f);
-                        let scales = DistanceMetric::compute_robust_scales(train_x, dims);
+
+                        // Use Min-Max scaling consistent with main run()
+                        let mut scales = vec![T::one(); dims];
+                        if n_train > 0 {
+                            let mut mins = train_x[..dims].to_vec();
+                            let mut maxs = train_x[..dims].to_vec();
+
+                            for i in 1..n_train {
+                                for d in 0..dims {
+                                    let val = train_x[i * dims + d];
+                                    if val < mins[d] {
+                                        mins[d] = val;
+                                    }
+                                    if val > maxs[d] {
+                                        maxs[d] = val;
+                                    }
+                                }
+                            }
+
+                            for d in 0..dims {
+                                let range = maxs[d] - mins[d];
+                                if range > T::zero() {
+                                    scales[d] = T::one() / range;
+                                }
+                            }
+                        }
                         let kdtree = KDTree::new(train_x, dims);
 
                         executor.predict(
