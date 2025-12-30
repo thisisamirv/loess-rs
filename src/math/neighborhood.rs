@@ -327,9 +327,6 @@ impl<T: Float> KDTree<T> {
         for &nd in buffer.heap.iter() {
             buffer.sort_vec.push(nd);
         }
-        buffer
-            .sort_vec
-            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Equal));
 
         // Update neighborhood in-place
         neighborhood.indices.clear();
@@ -338,7 +335,8 @@ impl<T: Float> KDTree<T> {
             neighborhood.indices.push(nd.0);
             neighborhood.distances.push(nd.1);
         }
-        neighborhood.max_distance = neighborhood.distances.last().cloned().unwrap_or(T::zero());
+        // Since heap is a MaxHeap, the largest distance (bandwidth) is at the top
+        neighborhood.max_distance = buffer.heap.peek().map(|nd| nd.1).unwrap_or(T::zero());
     }
 
     fn build_recursive(

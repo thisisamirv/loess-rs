@@ -22,7 +22,7 @@ fn test_kdtree_simple_2d() {
     tree.find_k_nearest(&[0.2, 0.2], k, &dist_calc, None, &mut buffer, &mut nbh);
 
     assert_eq!(nbh.indices.len(), 2);
-    assert_eq!(nbh.indices[0], 0); // (0,0) is closest
+    assert!(nbh.indices.contains(&0)); // (0,0) is closest
     assert!(nbh.indices.contains(&1) || nbh.indices.contains(&2)); // Either (1,0) or (0,1)
 }
 
@@ -70,7 +70,7 @@ fn test_kdtree_exclude_self() {
 }
 
 #[test]
-fn test_kdtree_find_k_nearest_sorted_by_distance() {
+fn test_kdtree_find_k_nearest_correct_subset() {
     let points: [f64; 8] = [0.0, 0.0, 5.0, 0.0, 2.0, 0.0, 7.0, 0.0];
     let dims = 2;
     let scales: [f64; 2] = [1.0, 1.0];
@@ -83,15 +83,15 @@ fn test_kdtree_find_k_nearest_sorted_by_distance() {
         scales: &scales,
     };
 
-    let k = 4;
+    let k = 2;
     let mut buffer = NeighborhoodSearchBuffer::new(k);
     let mut result = Neighborhood::with_capacity(k);
     tree.find_k_nearest(&query, k, &dist_calc, None, &mut buffer, &mut result);
 
-    // Should be sorted by distance
-    for i in 1..result.distances.len() {
-        assert!(result.distances[i] >= result.distances[i - 1]);
-    }
+    // Should contain the two closest points: (0,0) [idx 0] and (2,0) [idx 2]
+    assert_eq!(result.indices.len(), 2);
+    assert!(result.indices.contains(&0));
+    assert!(result.indices.contains(&2));
 }
 
 #[test]

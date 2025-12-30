@@ -411,6 +411,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
 // ============================================================================
 
 /// Batch LOESS processor.
+#[derive(Clone)]
 pub struct BatchLoess<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     config: BatchLoessBuilder<T>,
 }
