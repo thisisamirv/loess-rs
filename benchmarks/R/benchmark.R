@@ -173,7 +173,7 @@ benchmark_scalability <- function(iterations = 10) {
   for (size in sizes) {
     data <- generate_sine_data(size)
     run <- function() {
-      loess(y ~ x, data = data, span = 0.1, degree = 1, control = loess.control(surface = "direct"))
+      loess(y ~ x, data = data, span = 0.1, degree = 1, control = loess.control(surface = "interpolate"))
     }
     results[[paste0("scale_", size)]] <- run_benchmark(paste0("scale_", size), size, run, iterations)
   }
@@ -188,7 +188,7 @@ benchmark_fraction <- function(iterations = 10) {
 
   for (frac in fractions) {
     run <- function() {
-      loess(y ~ x, data = data, span = frac, degree = 1, control = loess.control(surface = "direct"))
+      loess(y ~ x, data = data, span = frac, degree = 1, control = loess.control(surface = "interpolate"))
     }
     results[[paste0("fraction_", frac)]] <- run_benchmark(paste0("fraction_", frac), size, run, iterations)
   }
@@ -206,7 +206,7 @@ benchmark_iterations <- function(iterations = 10) {
       family <- if (it == 0) "gaussian" else "symmetric"
       loess(y ~ x,
         data = data, span = 0.2, degree = 1, family = family,
-        control = loess.control(iterations = it + 1, surface = "direct")
+        control = loess.control(iterations = it + 1, surface = "interpolate")
       )
     }
     results[[paste0("iterations_", it)]] <- run_benchmark(paste0("iterations_", it), size, run, iterations)
@@ -221,7 +221,7 @@ benchmark_financial <- function(iterations = 10) {
   for (size in sizes) {
     data <- generate_financial_data(size)
     run <- function() {
-      loess(y ~ x, data = data, span = 0.1, degree = 1, control = loess.control(surface = "direct"))
+      loess(y ~ x, data = data, span = 0.1, degree = 1, control = loess.control(surface = "interpolate"))
     }
     results[[paste0("financial_", size)]] <- run_benchmark(paste0("financial_", size), size, run, iterations)
   }
@@ -235,7 +235,7 @@ benchmark_scientific <- function(iterations = 10) {
   for (size in sizes) {
     data <- generate_scientific_data(size)
     run <- function() {
-      loess(y ~ x, data = data, span = 0.15, degree = 1, control = loess.control(surface = "direct"))
+      loess(y ~ x, data = data, span = 0.15, degree = 1, control = loess.control(surface = "interpolate"))
     }
     results[[paste0("scientific_", size)]] <- run_benchmark(paste0("scientific_", size), size, run, iterations)
   }
@@ -249,7 +249,7 @@ benchmark_genomic <- function(iterations = 10) {
   for (size in sizes) {
     data <- generate_genomic_data(size)
     run <- function() {
-      loess(y ~ x, data = data, span = 0.1, degree = 1, control = loess.control(surface = "direct"))
+      loess(y ~ x, data = data, span = 0.1, degree = 1, control = loess.control(surface = "interpolate"))
     }
     results[[paste0("genomic_", size)]] <- run_benchmark(paste0("genomic_", size), size, run, iterations)
   }
@@ -263,14 +263,14 @@ benchmark_pathological <- function(iterations = 10) {
   # Clustered
   data_clustered <- generate_clustered_data(size)
   run_clustered <- function() {
-    loess(y ~ x, data = data_clustered, span = 0.3, degree = 1, control = loess.control(surface = "direct"))
+    loess(y ~ x, data = data_clustered, span = 0.3, degree = 1, control = loess.control(surface = "interpolate"))
   }
   results$clustered <- run_benchmark("clustered", size, run_clustered, iterations)
 
   # High noise
   data_noisy <- generate_high_noise_data(size)
   run_noise <- function() {
-    loess(y ~ x, data = data_noisy, span = 0.5, degree = 1, family = "symmetric", control = loess.control(surface = "direct"))
+    loess(y ~ x, data = data_noisy, span = 0.5, degree = 1, family = "symmetric", control = loess.control(surface = "interpolate"))
   }
   results$high_noise <- run_benchmark("high_noise", size, run_noise, iterations)
 
@@ -279,7 +279,7 @@ benchmark_pathological <- function(iterations = 10) {
   run_outliers <- function() {
     loess(y ~ x,
       data = data_outlier, span = 0.2, degree = 1, family = "symmetric",
-      control = loess.control(iterations = 11, surface = "direct")
+      control = loess.control(iterations = 11, surface = "interpolate")
     )
   }
   results$extreme_outliers <- run_benchmark("extreme_outliers", size, run_outliers, iterations)
@@ -289,7 +289,7 @@ benchmark_pathological <- function(iterations = 10) {
   y_const <- rep(5.0, size)
   data_const <- list(x = x_const, y = y_const)
   run_const <- function() {
-    loess(y ~ x, data = data_const, span = 0.2, degree = 1, control = loess.control(surface = "direct"))
+    loess(y ~ x, data = data_const, span = 0.2, degree = 1, control = loess.control(surface = "interpolate"))
   }
   results$constant_y <- run_benchmark("constant_y", size, run_const, iterations)
 
@@ -309,7 +309,7 @@ benchmark_polynomial_degrees <- function(iterations = 10) {
 
   for (d in degrees) {
     run <- function() {
-      loess(y ~ x, data = data, span = 0.2, degree = d$deg, control = loess.control(surface = "direct"))
+      loess(y ~ x, data = data, span = 0.2, degree = d$deg, control = loess.control(surface = "interpolate"))
     }
     results[[paste0("degree_", d$name)]] <- run_benchmark(paste0("degree_", d$name), size, run, iterations)
   }
@@ -323,7 +323,7 @@ benchmark_dimensions <- function(iterations = 10) {
   size_1d <- 2000
   data_1d <- generate_sine_data(size_1d)
   run_1d <- function() {
-    loess(y ~ x, data = data_1d, span = 0.3, degree = 1, control = loess.control(surface = "direct"))
+    loess(y ~ x, data = data_1d, span = 0.3, degree = 1, control = loess.control(surface = "interpolate"))
   }
   results$linear_1d <- run_benchmark("1d_linear", size_1d, run_1d, iterations)
 
@@ -331,7 +331,7 @@ benchmark_dimensions <- function(iterations = 10) {
   data_2d <- generate_2d_data(2000)
   size_2d <- length(data_2d$y)
   run_2d <- function() {
-    loess(y ~ x, data = data_2d, span = 0.3, degree = 1, control = loess.control(surface = "direct"))
+    loess(y ~ x, data = data_2d, span = 0.3, degree = 1, control = loess.control(surface = "interpolate"))
   }
   results$linear_2d <- run_benchmark("2d_linear", size_2d, run_2d, iterations)
 
@@ -339,7 +339,7 @@ benchmark_dimensions <- function(iterations = 10) {
   data_3d <- generate_3d_data(2000)
   size_3d <- length(data_3d$y)
   run_3d <- function() {
-    loess(y ~ x, data = data_3d, span = 0.3, degree = 1, control = loess.control(surface = "direct"))
+    loess(y ~ x, data = data_3d, span = 0.3, degree = 1, control = loess.control(surface = "interpolate"))
   }
   results$linear_3d <- run_benchmark("3d_linear", size_3d, run_3d, iterations)
 
@@ -369,7 +369,7 @@ main <- function() {
   all_results$dimensions <- unname(benchmark_dimensions(iterations))
 
   # Move to output directory
-  out_dir <- "../output"
+  out_dir <- "output"
   if (!dir.exists(out_dir)) {
     dir.create(out_dir, recursive = TRUE)
   }
