@@ -40,7 +40,6 @@ use num_traits::Float;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoundaryPolicy {
     /// Replicate edge values to provide context for boundary points.
-    #[default]
     Extend,
 
     /// Mirror values across the boundary.
@@ -48,6 +47,10 @@ pub enum BoundaryPolicy {
 
     /// Use zero padding beyond data boundaries.
     Zero,
+
+    /// No boundary padding (standard LOESS behavior).
+    #[default]
+    NoBoundary,
 }
 
 impl BoundaryPolicy {
@@ -69,6 +72,11 @@ impl BoundaryPolicy {
 
         // 1D specific full implementation
         if d == 1 {
+            // Check for NoBoundary policy first
+            if *self == BoundaryPolicy::NoBoundary {
+                return (x.to_vec(), y.to_vec(), mapping);
+            }
+
             let pad_len = (window_size / 2).min(n - 1);
             if pad_len == 0 {
                 return (x.to_vec(), y.to_vec(), mapping);
@@ -104,6 +112,7 @@ impl BoundaryPolicy {
                         py.push(T::zero());
                     }
                 }
+                BoundaryPolicy::NoBoundary => unreachable!(),
             }
 
             // Add original data
@@ -136,6 +145,7 @@ impl BoundaryPolicy {
                         py.push(T::zero());
                     }
                 }
+                BoundaryPolicy::NoBoundary => unreachable!(),
             }
 
             let n_padded = px.len();
@@ -147,11 +157,11 @@ impl BoundaryPolicy {
             return (px, py, full_mapping);
         }
 
-        // nD Logic (currently mostly Reflect or fallback)
-
-        // Default: no padding for complex policies in high dimensions unless specially handled
-        if *self == BoundaryPolicy::Extend || (d > 1 && *self == BoundaryPolicy::Zero) {
-            // Zero padding in nD is tricky without a clear "outside".
+        if *self == BoundaryPolicy::Extend
+            || *self == BoundaryPolicy::NoBoundary
+            || (d > 1 && *self == BoundaryPolicy::Zero)
+        {
+            // TODO: Zero padding in nD is tricky without a clear "outside".
             // We'll skip extending for now or implement if needed.
             return (x.to_vec(), y.to_vec(), mapping);
         }

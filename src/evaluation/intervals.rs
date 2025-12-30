@@ -40,7 +40,7 @@ use std::vec::Vec;
 use num_traits::Float;
 
 // Internal dependencies
-use crate::math::mad::compute_mad;
+use crate::math::scaling::ScalingMethod;
 use crate::primitives::errors::LoessError;
 use crate::primitives::window::Window;
 
@@ -155,7 +155,7 @@ impl<T: Float> IntervalMethod<T> {
         }
 
         let mut vals = residuals.to_vec();
-        let mad = compute_mad(&mut vals);
+        let mad = ScalingMethod::MAD.compute(&mut vals);
         if mad > T::zero() {
             mad * scale_const
         } else {

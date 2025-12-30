@@ -37,7 +37,7 @@ use core::fmt::{Display, Formatter, Result};
 use num_traits::Float;
 
 // Internal dependencies
-use crate::math::mad::compute_mad;
+use crate::math::scaling::ScalingMethod;
 
 // ============================================================================
 // Diagnostics Structure
@@ -310,7 +310,7 @@ impl<T: Float> Diagnostics<T> {
         }
 
         let mut vals = residuals.to_vec();
-        let mad = compute_mad(&mut vals);
+        let mad = ScalingMethod::MAD.compute(&mut vals);
         if mad > T::zero() {
             mad * scale_const
         } else {

@@ -249,7 +249,7 @@
 //! | **robustness_method**         | `Bisquare`                                    | 3 methods            | Outlier downweighting method                     | All              |
 //! | **zero_weight_fallback**      | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
 //! | **return_residuals**          | false                                         | true/false           | Include residuals in output                      | All              |
-//! | **boundary_policy**           | `Extend`                                      | 3 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
+//! | **boundary_policy**           | `NoBoundary`                                  | 4 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
 //! | **auto_convergence**          | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
 //! | **return_robustness_weights** | false                                         | true/false           | Include final weights in output                  | All              |
 //! | **degree**                    | `Linear`                                      | 0, 1, 2              | Polynomial degree (constant, linear, quadratic)  | All              |
@@ -258,6 +258,7 @@
 //! | **surface_mode**              | `Interpolation`                               | 2 modes              | Surface evaluation mode (speed vs accuracy)      | All              |
 //! | **cell**                      | 0.2                                           | (0, 1]               | Interpolation cell size (smaller = higher res)   | All              |
 //! | **interpolation_vertices**    | None (no limit)                               | [1, ∞)               | Optional vertex limit for interpolation surface  | All              |
+//! | **scaling_method**            | `MAR`                                         | 2 methods            | Scale estimation method                          | All              |
 //! | **return_diagnostics**        | false                                         | true/false           | Include RMSE, MAE, R^2, etc. in output           | Batch, Streaming |
 //! | **return_se**                 | false                                         | true/false           | Enable standard error computation                | Batch            |
 //! | **confidence_intervals**      | None                                          | 0..1 (level)         | Uncertainty in mean curve                        | Batch            |
@@ -279,11 +280,12 @@
 //! | **weight_function**      | `Tricube`, `Epanechnikov`, `Gaussian`, `Biweight`, `Cosine`, `Triangle`, `Uniform` |
 //! | **robustness_method**    | `Bisquare`, `Huber`, `Talwar`                                                      |
 //! | **zero_weight_fallback** | `UseLocalMean`, `ReturnOriginal`, `ReturnNone`                                     |
-//! | **boundary_policy**      | `Extend`, `Reflect`, `Zero`                                                        |
+//! | **boundary_policy**      | `Extend`, `Reflect`, `Zero`, `NoBoundary`                                          |
 //! | **update_mode**          | `Incremental`, `Full`                                                              |
 //! | **degree**               | `Constant`, `Linear`, `Quadratic`, `Cubic`, `Quartic`                              |
 //! | **distance_metric**      | `Euclidean`, `Normalized`, `Chebyshev`, `Manhattan`, `Minkowski`, `Weighted`       |
 //! | **surface_mode**         | `Interpolation`, `Direct`                                                          |
+//! | **scaling_method**       | `MAR`, `MAD`                                                                       |
 //!
 //! See the detailed sections below for guidance on choosing between these options.
 //!
@@ -721,9 +723,10 @@
 //! LOESS traditionally uses asymmetric windows at boundaries, which can introduce bias.
 //! The `boundary_policy` parameter pads the data before smoothing to enable centered windows:
 //!
-//! - **`Extend`** (default): Pad with constant values (first/last y-value)
+//! - **`Extend`**: Pad with constant values (first/last y-value)
 //! - **`Reflect`**: Mirror the data at boundaries
 //! - **`Zero`**: Pad with zeros
+//! - **`NoBoundary`** (default): Do not pad the data
 //!
 //! ```rust
 //! use loess_rs::prelude::*;
@@ -950,6 +953,32 @@
 //!     .fraction(0.5)
 //!     .cell(0.1)
 //!     .interpolation_vertices(1000)  // Explicit limit: consistency check applies
+//!     .adapter(Batch)
+//!     .build()?;
+//!
+//! let result = model.fit(&x, &y)?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
+//! ### Scaling Method
+//!
+//! The scaling method controls how the residuals are scaled.
+//!
+//! - **`MAR`**:
+//!   - Median Absolute Residual: `median(|r|)`
+//!   - Default Cleveland implementation
+//! - **`MAD`**:
+//!   - Median Absolute Deviation: `median(|r - median(r)|)`
+//!   - More robust to outliers
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//! # let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+//! # let y = vec![2.0, 4.1, 5.9, 8.2, 9.8];
+//!
+//! let model = Loess::new()
+//!     .fraction(0.5)
+//!     .scaling_method(MAD)
 //!     .adapter(Batch)
 //!     .build()?;
 //!
@@ -1432,6 +1461,7 @@ pub mod prelude {
     pub use crate::api::{
         Adapter::{Batch, Online, Streaming},
         BoundaryPolicy::Extend,
+        BoundaryPolicy::NoBoundary,
         BoundaryPolicy::Reflect,
         BoundaryPolicy::Zero,
         DistanceMetric::{Chebyshev, Euclidean, Manhattan, Minkowski, Normalized, Weighted},
@@ -1441,6 +1471,8 @@ pub mod prelude {
         MergeStrategy::WeightedAverage,
         PolynomialDegree::{Constant, Cubic, Linear, Quadratic, Quartic},
         RobustnessMethod::{Bisquare, Huber, Talwar},
+        ScalingMethod::MAD,
+        ScalingMethod::MAR,
         SurfaceMode::{Direct, Interpolation},
         UpdateMode::{Full, Incremental},
         WeightFunction::{Biweight, Cosine, Epanechnikov, Gaussian, Triangle, Tricube, Uniform},

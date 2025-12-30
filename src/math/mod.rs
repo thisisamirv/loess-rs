@@ -31,8 +31,8 @@
 /// Kernel (weight) functions for distance-based weighting.
 pub mod kernel;
 
-/// Median Absolute Deviation (MAD) computation.
-pub mod mad;
+/// Robust scale estimation (MAR/MAD).
+pub mod scaling;
 
 /// Boundary padding utilities.
 pub mod boundary;

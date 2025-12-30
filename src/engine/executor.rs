@@ -66,6 +66,7 @@ use crate::math::linalg::FloatLinalg;
 use crate::math::neighborhood::{
     KDTree, Neighborhood, NodeDistance, PointDistance, floyd_rivest_select,
 };
+use crate::math::scaling::ScalingMethod;
 use crate::primitives::backend::Backend;
 use crate::primitives::buffer::{FittingBuffer, LoessBuffer, NeighborhoodSearchBuffer};
 use crate::primitives::window::Window;
@@ -227,6 +228,9 @@ pub struct LoessConfig<T: FloatLinalg + SolverLinalg> {
     /// Robustness weighting method for outlier downweighting.
     pub robustness_method: RobustnessMethod,
 
+    /// Residual scaling method (MAR or MAD).
+    pub scaling_method: ScalingMethod,
+
     /// Candidate fractions to evaluate during cross-validation.
     pub cv_fractions: Option<Vec<T>>,
 
@@ -302,6 +306,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Defau
             weight_function: WeightFunction::default(),
             zero_weight_fallback: ZeroWeightFallback::default(),
             robustness_method: RobustnessMethod::default(),
+            scaling_method: ScalingMethod::default(),
             cv_fractions: None,
             cv_kind: None,
             cv_seed: None,
@@ -341,6 +346,9 @@ pub struct LoessExecutor<T: FloatLinalg + SolverLinalg> {
 
     /// Robustness method for iterative refinement.
     pub robustness_method: RobustnessMethod,
+
+    /// Residual scaling method.
+    pub scaling_method: ScalingMethod,
 
     /// Boundary handling policy.
     pub boundary_policy: BoundaryPolicy,
@@ -414,6 +422,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             weight_function: WeightFunction::default(),
             zero_weight_fallback: ZeroWeightFallback::default(),
             robustness_method: RobustnessMethod::default(),
+            scaling_method: ScalingMethod::default(),
             boundary_policy: BoundaryPolicy::default(),
             polynomial_degree: PolynomialDegree::default(),
             dimensions: 1,
@@ -439,6 +448,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             .weight_function(config.weight_function)
             .zero_weight_fallback(config.zero_weight_fallback)
             .robustness_method(config.robustness_method)
+            .scaling_method(config.scaling_method)
             .boundary_policy(config.boundary_policy)
             .polynomial_degree(config.polynomial_degree)
             .dimensions(config.dimensions)
@@ -484,6 +494,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
     /// Set the robustness method for iterative refinement.
     pub fn robustness_method(mut self, method: RobustnessMethod) -> Self {
         self.robustness_method = method;
+        self
+    }
+
+    /// Set the residual scaling method (MAR/MAD).
+    pub fn scaling_method(mut self, method: ScalingMethod) -> Self {
+        self.scaling_method = method;
         self
     }
 
@@ -865,47 +881,25 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 &mut workspace.executor_buffer.residuals[..n],
             );
 
-            workspace.executor_buffer.sorted_residuals.clear();
+            // 1. Compute new weights using the unified robustness method
+            // This handles scaling (MAR/MAD) and weight function application
+            let n_res = n; // length of residuals
+            let mut new_weights = vec![T::zero(); n];
+
+            // Re-use sorted_residuals as scratch space for median computation
             workspace
                 .executor_buffer
                 .sorted_residuals
-                .extend_from_slice(&workspace.executor_buffer.residuals[..n]);
-            let sorted_residuals = &mut workspace.executor_buffer.sorted_residuals;
-            let median_idx = n / 2;
-            floyd_rivest_select(sorted_residuals, median_idx, |a: &T, b: &T| {
-                a.partial_cmp(b).unwrap_or(Equal)
-            });
-            let median_residual = sorted_residuals[median_idx];
-            let mad = median_residual;
+                .resize(n_res, T::zero());
 
-            if mad <= T::epsilon() {
-                break;
-            }
+            self.robustness_method.apply_robustness_weights(
+                &workspace.executor_buffer.residuals[..n_res],
+                &mut new_weights,
+                self.scaling_method,
+                &mut workspace.executor_buffer.sorted_residuals,
+            );
 
             let tolerance_val = tolerance.unwrap_or_else(|| T::from(1e-6).unwrap());
-
-            // 1. Compute new weights for original points
-            // Use a temp buffer to avoid overwriting weights used by augmented points before sync
-            let mut new_weights = vec![T::zero(); n];
-            for (i, weight) in new_weights.iter_mut().enumerate().take(n) {
-                *weight = match self.robustness_method {
-                    RobustnessMethod::Bisquare => RobustnessMethod::bisquare_weight(
-                        workspace.executor_buffer.residuals[i],
-                        mad,
-                        T::from(6.0).unwrap(),
-                    ),
-                    RobustnessMethod::Huber => RobustnessMethod::huber_weight(
-                        workspace.executor_buffer.residuals[i],
-                        mad,
-                        T::from(1.345).unwrap(),
-                    ),
-                    RobustnessMethod::Talwar => RobustnessMethod::talwar_weight(
-                        workspace.executor_buffer.residuals[i],
-                        mad,
-                        T::from(2.5).unwrap(),
-                    ),
-                };
-            }
 
             // 2. Sync to robustness_weights and check convergence
             let mut max_change = T::zero();

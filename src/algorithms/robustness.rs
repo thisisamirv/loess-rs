@@ -35,7 +35,7 @@
 use num_traits::Float;
 
 // Internal dependencies
-use crate::math::mad::compute_mad;
+use crate::math::scaling::ScalingMethod;
 
 // ============================================================================
 // Robustness Method
@@ -97,13 +97,14 @@ impl RobustnessMethod {
         &self,
         residuals: &[T],
         weights: &mut [T],
+        scaling_method: ScalingMethod,
         scratch: &mut [T],
     ) {
         if residuals.is_empty() {
             return;
         }
 
-        let base_scale = self.compute_scale(residuals, scratch);
+        let base_scale = self.compute_scale(residuals, scaling_method, scratch);
 
         let (method_type, tuning_constant) = match self {
             Self::Bisquare => (0, Self::DEFAULT_BISQUARE_C),
@@ -126,29 +127,50 @@ impl RobustnessMethod {
     // Scale Estimation
     // ========================================================================
 
-    /// Compute robust scale estimate with MAD fallback.
-    fn compute_scale<T: Float>(&self, residuals: &[T], scratch: &mut [T]) -> T {
-        // Use scratch buffer for MAD to avoid allocation
-        scratch.copy_from_slice(residuals);
-        let mad = compute_mad(scratch);
-
-        // Compute MAR (Mean Absolute Residual) inline
+    /// Compute robust scale estimate with zero-scale safety fallback.
+    fn compute_scale<T: Float>(
+        &self,
+        residuals: &[T],
+        scaling_method: ScalingMethod,
+        scratch: &mut [T],
+    ) -> T {
+        // Step 1: Compute Mean Absolute Error (MAE).
+        // This is O(N) and defines our scale threshold.
         let n = residuals.len();
+        if n == 0 {
+            return T::zero();
+        }
+
         let mut sum_abs = T::zero();
         for &r in residuals {
             sum_abs = sum_abs + r.abs();
         }
-        let mean_abs = sum_abs / T::from(n).unwrap();
+        let mae = sum_abs / T::from(n).unwrap();
 
-        let relative_threshold = T::from(Self::SCALE_THRESHOLD).unwrap() * mean_abs;
+        // Safety: If Mean is 0, Median is also 0. Exit early.
+        if mae.is_zero() {
+            return T::zero();
+        }
+
+        // Step 2: Establish the safety threshold.
+        // We use either a relative threshold (portion of MAE) or an absolute floor.
+        let relative_threshold = T::from(Self::SCALE_THRESHOLD).unwrap() * mae;
         let absolute_threshold = T::from(Self::MIN_TUNED_SCALE).unwrap();
         let scale_threshold = relative_threshold.max(absolute_threshold);
 
-        if mad <= scale_threshold {
-            // MAD is too small, use MAR as fallback
-            mean_abs.max(mad)
+        // Step 3: Compute robust scale using selected method (Median-based).
+        // This is usually the more expensive operation (O(N) or O(N log N)).
+        scratch.copy_from_slice(residuals);
+        let scale_val = scaling_method.compute(scratch);
+
+        // Step 4: Final decision.
+        // If the robust Median-based scale is too small, fallback to MAE.
+        if scale_val <= scale_threshold {
+            // Use MAE as fallback (it's less robust but more stable near zero)
+            mae.max(scale_val)
         } else {
-            mad
+            // Robust scale is healthy
+            scale_val
         }
     }
 

@@ -27,6 +27,7 @@ use loess_rs::internals::engine::executor::{
     ExecutorOutput, LoessConfig, LoessExecutor, SurfaceMode,
 };
 use loess_rs::internals::math::kernel::WeightFunction;
+use loess_rs::internals::math::scaling::ScalingMethod;
 
 // ============================================================================
 // Constructor Tests
@@ -131,6 +132,7 @@ fn test_config_custom() {
         weight_function: WeightFunction::Epanechnikov,
         zero_weight_fallback: ZeroWeightFallback::ReturnOriginal,
         robustness_method: RobustnessMethod::Huber,
+        scaling_method: ScalingMethod::default(),
         cv_fractions: Some(vec![0.3, 0.5, 0.7]),
         cv_kind: None,
         auto_convergence: Some(1e-6),
@@ -332,6 +334,7 @@ fn test_config_f32() {
         weight_function: WeightFunction::Tricube,
         zero_weight_fallback: ZeroWeightFallback::default(),
         robustness_method: RobustnessMethod::Bisquare,
+        scaling_method: ScalingMethod::default(),
         cv_fractions: None,
         cv_kind: None,
         auto_convergence: None,
@@ -392,6 +395,7 @@ fn test_executor_convergence_zero_tolerance() {
         weight_function: WeightFunction::Tricube,
         zero_weight_fallback: ZeroWeightFallback::default(),
         robustness_method: RobustnessMethod::Bisquare,
+        scaling_method: ScalingMethod::default(),
         cv_fractions: None,
         cv_kind: None,
         auto_convergence: Some(0.0), // Zero tolerance

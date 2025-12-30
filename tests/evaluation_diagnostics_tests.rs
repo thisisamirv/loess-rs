@@ -19,7 +19,7 @@
 use approx::{assert_abs_diff_eq, assert_relative_eq};
 
 use loess_rs::internals::evaluation::diagnostics::{Diagnostics, DiagnosticsState};
-use loess_rs::internals::math::mad::compute_mad;
+use loess_rs::internals::math::scaling::ScalingMethod;
 
 const MIN_TUNED_SCALE: f64 = 1e-12;
 const MAD_TO_STD_FACTOR: f64 = 1.4826;
@@ -184,8 +184,8 @@ fn test_residual_sd_single() {
 /// Verifies that SD equals MAD * factor.
 #[test]
 fn test_residual_sd_normal() {
-    let res = vec![0.0f64, 1.0, -1.0, 2.0, -2.0];
-    let mad = compute_mad(&mut res.clone());
+    let mut res = vec![0.0f64, 1.0, -1.0, 2.0, -2.0];
+    let mad = ScalingMethod::MAD.compute(&mut res);
 
     assert!(mad > 0.0, "MAD should be positive");
     assert_relative_eq!(
@@ -202,7 +202,7 @@ fn test_residual_sd_normal() {
 fn test_residual_sd_mad_zero() {
     // All-equal residuals => MAD == 0
     let mut vals = vec![2.0f64, 2.0, 2.0, 2.0];
-    assert_eq!(compute_mad(&mut vals), 0.0);
+    assert_eq!(ScalingMethod::MAD.compute(&mut vals), 0.0);
 
     let expected = MIN_TUNED_SCALE * MAD_TO_STD_FACTOR;
     assert_relative_eq!(
@@ -220,7 +220,7 @@ fn test_residual_sd_large_arrays() {
     let n = 10000;
     let residuals: Vec<f64> = (0..n).map(|i| (i as f64 * 0.01).sin()).collect();
 
-    let mad = compute_mad(&mut residuals.clone());
+    let mad = ScalingMethod::MAD.compute(&mut residuals.clone());
     assert!(mad > 0.0, "MAD should be positive");
 
     let mad_scale = Diagnostics::calculate_residual_sd(&residuals);

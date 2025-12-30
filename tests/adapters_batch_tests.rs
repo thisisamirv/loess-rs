@@ -607,6 +607,7 @@ fn test_batch_all_identical_y() {
         .fraction(0.5)
         .iterations(3)
         .interpolation_vertices(30)
+        .surface_mode(Direct)
         .adapter(Batch)
         .build()
         .unwrap()

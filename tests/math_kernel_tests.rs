@@ -18,7 +18,6 @@
 use approx::assert_relative_eq;
 
 use loess_rs::internals::math::kernel::WeightFunction;
-use loess_rs::internals::math::mad::compute_mad;
 use loess_rs::internals::primitives::window::Window;
 
 // ============================================================================
@@ -415,35 +414,6 @@ fn test_window_weights_various_kernels() {
         assert!(sum > 0.0, "{} should produce positive sum", kernel.name());
         assert!(sum.is_finite(), "{} sum should be finite", kernel.name());
     }
-}
-
-// ============================================================================
-// MAD and Additional Math Edge Cases
-// ============================================================================
-
-/// Test explicit MAD computation for various distributions.
-#[test]
-fn test_compute_mad_explicit() {
-    // 1. Identical values => MAD=0
-    let mut residuals = vec![10.0, 10.0, 10.0, 10.0];
-    assert_eq!(compute_mad(&mut residuals), 0.0);
-
-    // 2. Uniformly spaced => [1, 2, 3, 4, 5]
-    // Median is 3. Deviations: [2, 1, 0, 1, 2]. Sorted: [0, 1, 1, 2, 2]. MAD median = 1.
-    let mut residuals = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-    assert_relative_eq!(compute_mad(&mut residuals), 1.0, epsilon = 1e-12);
-
-    // 3. Even length: [1, 2, 3, 4]
-    // Median: (2+3)/2 = 2.5.
-    // Deviations: [1.5, 0.5, 0.5, 1.5]. Sorted: [0.5, 0.5, 1.5, 1.5]. MAD median = (0.5+1.5)/2 = 1.0.
-    let mut residuals = vec![1.0, 2.0, 3.0, 4.0];
-    assert_relative_eq!(compute_mad(&mut residuals), 1.0, epsilon = 1e-12);
-
-    // 4. Extreme outlier: [1, 2, 3, 1000]
-    // Median: (2+3)/2 = 2.5.
-    // Deviations: [1.5, 0.5, 0.5, 997.5]. Sorted: [0.5, 0.5, 1.5, 997.5]. MAD median = (0.5+1.5)/2 = 1.0.
-    let mut residuals = vec![1.0, 2.0, 3.0, 1000.0];
-    assert_relative_eq!(compute_mad(&mut residuals), 1.0, epsilon = 1e-12);
 }
 
 /// Test kernel weights exactly at the 1.0 boundary.

@@ -57,6 +57,7 @@ pub use crate::evaluation::cv::{KFold, LOOCV};
 pub use crate::math::boundary::BoundaryPolicy;
 pub use crate::math::distance::DistanceMetric;
 pub use crate::math::kernel::WeightFunction;
+pub use crate::math::scaling::ScalingMethod;
 pub use crate::primitives::errors::LoessError;
 
 /// Marker types for selecting execution adapters.
@@ -79,6 +80,9 @@ pub struct LoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug +
 
     /// Outlier downweighting method.
     pub robustness_method: Option<RobustnessMethod>,
+
+    /// Residual scaling method (MAR or MAD).
+    pub scaling_method: Option<ScalingMethod>,
 
     /// interval estimation configuration.
     pub interval_type: Option<IntervalMethod<T>>,
@@ -200,6 +204,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             iterations: None,
             weight_function: None,
             robustness_method: None,
+            scaling_method: None,
             interval_type: None,
             cv_fractions: None,
             cv_kind: None,
@@ -336,6 +341,15 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             self.duplicate_param = Some("robustness_method");
         }
         self.robustness_method = Some(rm);
+        self
+    }
+
+    /// Set the residual scaling method (MAR/MAD).
+    pub fn scaling_method(mut self, sm: ScalingMethod) -> Self {
+        if self.scaling_method.is_some() {
+            self.duplicate_param = Some("scaling_method");
+        }
+        self.scaling_method = Some(sm);
         self
     }
 
@@ -550,6 +564,9 @@ impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> Loess
         if let Some(rm) = builder.robustness_method {
             result.robustness_method = rm;
         }
+        if let Some(sm) = builder.scaling_method {
+            result.scaling_method = sm;
+        }
         if let Some(it) = builder.interval_type {
             result.interval_type = Some(it);
         }
@@ -657,6 +674,9 @@ impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> Loess
         if let Some(rm) = builder.robustness_method {
             result.robustness_method = rm;
         }
+        if let Some(sm) = builder.scaling_method {
+            result.scaling_method = sm;
+        }
         if let Some(zwf) = builder.zero_weight_fallback {
             result.zero_weight_fallback = zwf;
         }
@@ -753,6 +773,9 @@ impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> Loess
         }
         if let Some(rm) = builder.robustness_method {
             result.robustness_method = rm;
+        }
+        if let Some(sm) = builder.scaling_method {
+            result.scaling_method = sm;
         }
         if let Some(bp) = builder.boundary_policy {
             result.boundary_policy = bp;

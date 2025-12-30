@@ -58,6 +58,7 @@ use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::{DistanceLinalg, DistanceMetric};
 use crate::math::kernel::WeightFunction;
 use crate::math::linalg::FloatLinalg;
+use crate::math::scaling::ScalingMethod;
 use crate::primitives::backend::Backend;
 use crate::primitives::errors::LoessError;
 
@@ -109,6 +110,9 @@ pub struct StreamingLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg>
 
     /// Robustness method
     pub robustness_method: RobustnessMethod,
+
+    /// Residual scaling method
+    pub scaling_method: ScalingMethod,
 
     /// Policy for handling zero-weight neighborhoods
     pub zero_weight_fallback: ZeroWeightFallback,
@@ -199,6 +203,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
             weight_function: WeightFunction::default(),
             boundary_policy: BoundaryPolicy::default(),
             robustness_method: RobustnessMethod::default(),
+            scaling_method: ScalingMethod::default(),
             zero_weight_fallback: ZeroWeightFallback::default(),
             merge_strategy: MergeStrategy::default(),
             compute_residuals: false,
@@ -247,6 +252,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
     /// Set the robustness method for outlier handling.
     pub fn robustness_method(mut self, method: RobustnessMethod) -> Self {
         self.robustness_method = method;
+        self
+    }
+
+    /// Set the residual scaling method (MAR/MAD).
+    pub fn scaling_method(mut self, method: ScalingMethod) -> Self {
+        self.scaling_method = method;
         self
     }
 
@@ -467,6 +478,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             weight_function: self.config.weight_function,
             zero_weight_fallback: self.config.zero_weight_fallback,
             robustness_method: self.config.robustness_method,
+            scaling_method: self.config.scaling_method,
             boundary_policy: self.config.boundary_policy,
             polynomial_degree: self.config.polynomial_degree,
             dimensions: self.config.dimensions,

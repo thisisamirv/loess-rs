@@ -57,6 +57,7 @@ use crate::math::distance::{DistanceLinalg, DistanceMetric};
 use crate::math::hat_matrix::HatMatrixStats;
 use crate::math::kernel::WeightFunction;
 use crate::math::linalg::FloatLinalg;
+use crate::math::scaling::ScalingMethod;
 use crate::primitives::backend::Backend;
 use crate::primitives::errors::LoessError;
 
@@ -78,6 +79,9 @@ pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
 
     /// Robustness method
     pub robustness_method: RobustnessMethod,
+
+    /// Residual scaling method
+    pub scaling_method: ScalingMethod,
 
     /// Confidence/Prediction interval configuration
     pub interval_type: Option<IntervalMethod<T>>,
@@ -178,6 +182,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
             iterations: 3,
             weight_function: WeightFunction::default(),
             robustness_method: RobustnessMethod::default(),
+            scaling_method: ScalingMethod::default(),
             interval_type: None,
             cv_fractions: None,
             cv_kind: None,
@@ -233,6 +238,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
         self
     }
 
+    /// Set the residual scaling method (MAR/MAD).
+    pub fn scaling_method(mut self, method: ScalingMethod) -> Self {
+        self.scaling_method = method;
+        self
+    }
+
     /// Set the zero-weight fallback policy.
     pub fn zero_weight_fallback(mut self, fallback: ZeroWeightFallback) -> Self {
         self.zero_weight_fallback = fallback;
@@ -272,6 +283,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
     /// Set maximum number of interpolation vertices.
     pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
         self.interpolation_vertices = Some(vertices);
+        self
+    }
+
+    /// Set surface evaluation mode (Interpolation or Direct).
+    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
+        self.surface_mode = mode;
         self
     }
 
@@ -430,6 +447,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             weight_function: self.config.weight_function,
             zero_weight_fallback: self.config.zero_weight_fallback,
             robustness_method: self.config.robustness_method,
+            scaling_method: self.config.scaling_method,
             cv_fractions: self.config.cv_fractions,
             cv_kind: self.config.cv_kind,
             auto_convergence: self.config.auto_convergence,
