@@ -249,7 +249,7 @@
 //! | **robustness_method**         | `Bisquare`                                    | 3 methods            | Outlier downweighting method                     | All              |
 //! | **zero_weight_fallback**      | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
 //! | **return_residuals**          | false                                         | true/false           | Include residuals in output                      | All              |
-//! | **boundary_policy**           | `NoBoundary`                                  | 4 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
+//! | **boundary_policy**           | `Extend`                                      | 4 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
 //! | **auto_convergence**          | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
 //! | **return_robustness_weights** | false                                         | true/false           | Include final weights in output                  | All              |
 //! | **degree**                    | `Linear`                                      | 0, 1, 2              | Polynomial degree (constant, linear, quadratic)  | All              |
@@ -258,7 +258,7 @@
 //! | **surface_mode**              | `Interpolation`                               | 2 modes              | Surface evaluation mode (speed vs accuracy)      | All              |
 //! | **cell**                      | 0.2                                           | (0, 1]               | Interpolation cell size (smaller = higher res)   | All              |
 //! | **interpolation_vertices**    | None (no limit)                               | [1, ∞)               | Optional vertex limit for interpolation surface  | All              |
-//! | **scaling_method**            | `MAR`                                         | 2 methods            | Scale estimation method                          | All              |
+//! | **scaling_method**            | `MAD`                                         | 2 methods            | Scale estimation method                          | All              |
 //! | **return_diagnostics**        | false                                         | true/false           | Include RMSE, MAE, R^2, etc. in output           | Batch, Streaming |
 //! | **return_se**                 | false                                         | true/false           | Enable standard error computation                | Batch            |
 //! | **confidence_intervals**      | None                                          | 0..1 (level)         | Uncertainty in mean curve                        | Batch            |
@@ -723,10 +723,10 @@
 //! LOESS traditionally uses asymmetric windows at boundaries, which can introduce bias.
 //! The `boundary_policy` parameter pads the data before smoothing to enable centered windows:
 //!
-//! - **`Extend`**: Pad with constant values (first/last y-value)
+//! - **`Extend`** (default): Pad with constant values (first/last y-value)
 //! - **`Reflect`**: Mirror the data at boundaries
 //! - **`Zero`**: Pad with zeros
-//! - **`NoBoundary`** (default): Do not pad the data
+//! - **`NoBoundary`**: Do not pad the data
 //!
 //! ```rust
 //! use loess_rs::prelude::*;
@@ -748,6 +748,7 @@
 //! - Use `Extend` for most cases (default)
 //! - Use `Reflect` for periodic or symmetric data
 //! - Use `Zero` when data naturally approaches zero at boundaries
+//! - Use `NoBoundary` to disable padding
 //!
 //! ### Auto-Convergence
 //!
@@ -967,7 +968,7 @@
 //! - **`MAR`**:
 //!   - Median Absolute Residual: `median(|r|)`
 //!   - Default Cleveland implementation
-//! - **`MAD`**:
+//! - **`MAD`** (default):
 //!   - Median Absolute Deviation: `median(|r - median(r)|)`
 //!   - More robust to outliers
 //!

@@ -27,10 +27,10 @@ use num_traits::Float;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ScalingMethod {
     /// Median Absolute Residual: `median(|r|)`.
-    #[default]
     MAR,
 
     /// Median Absolute Deviation: `median(|r - median(r)|)`.
+    #[default]
     MAD,
 }
 

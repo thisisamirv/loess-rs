@@ -40,6 +40,7 @@ use num_traits::Float;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoundaryPolicy {
     /// Replicate edge values to provide context for boundary points.
+    #[default]
     Extend,
 
     /// Mirror values across the boundary.
@@ -49,7 +50,6 @@ pub enum BoundaryPolicy {
     Zero,
 
     /// No boundary padding (standard LOESS behavior).
-    #[default]
     NoBoundary,
 }
 
