@@ -1,6 +1,6 @@
 # Loess Validation & Benchmarking Workspace
 
-This workspace is dedicated to validating the correctness and benchmarking the performance of the [loess-rs](https://github.com/thisisamirv/loess-rs) Rust crate against the reference Python implementation (`statsmodels`).
+This workspace is dedicated to validating the correctness and benchmarking the performance of the [loess-rs](https://github.com/thisisamirv/loess-rs) Rust crate against the reference R implementation (`loess`).
 
 It builds the `loess-rs` crate from the `develop` branch (git dependency) to ensure the latest changes are tested.
 
@@ -31,14 +31,14 @@ python3 convert_criterion.py
 
 *Output: `benchmarks/output/rust_benchmark.json`*
 
-### 3. Run Statsmodels Benchmarks
+### 3. Run R Benchmarks
 
 ```bash
-cd benchmarks/statsmodels
-python3 benchmark.py
+# from benchmarks directory
+Rscript R/benchmark.R
 ```
 
-*Output: `benchmarks/output/statsmodels_benchmark.json`*
+*Output: `benchmarks/output/r_benchmark.json`*
 
 ### 4. Compare Benchmark Results
 
@@ -64,14 +64,15 @@ cargo run --release
 
 *Output: `validation/output/rust_validate.json`*
 
-### 2. Run Statsmodels Validation
+### 2. Run R Validation
 
 ```bash
-# from the root directory
-python3 validation/statsmodels/validate.py
+# from the validation directory
+cd validation
+Rscript R/validate.R
 ```
 
-*Output: `validation/output/statsmodels_validate.json`*
+*Output: `validation/output/r/*.json`*
 
 ### 3. Compare Validation Results
 
@@ -87,4 +88,5 @@ python3 compare_validation.py
 ## Requirements
 
 - **Rust**: Latest stable.
-- **Python**: 3.x with `numpy`, `scipy`, `statsmodels`, `pytest` installed.
+- **R**: Latest stable with standard packages (`stats`, `jsonlite`).
+- **Python**: 3.x with `numpy`, `scipy` (for comparison scripts).

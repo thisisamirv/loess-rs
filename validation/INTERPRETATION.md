@@ -2,57 +2,41 @@
 
 ## High-Level Summary
 
-| Aspect          | Status        | Details                              |
-|-----------------|---------------|--------------------------------------|
-| **Accuracy**    | ✅ ACCEPTABLE | Max diff < 0.005 across scenarios    |
-| **Correlation** | ✅ MATCH      | Pearson r > 0.9999 for all scenarios |
-| **Convergence** | ✅ SUPERIOR   | Fewer iterations needed (3 vs 6)     |
+| Aspect          | Status         | Details                                    |
+|-----------------|----------------|--------------------------------------------|
+| **Accuracy**    | ✅ EXACT MATCH | Max diff < 1e-12 across all scenarios      |
+| **Consistency** | ✅ PERFECT     | 20/20 scenarios pass with strict tolerance |
+| **Robustness**  | ✅ VERIFIED    | Robust smoothing matches R exactly         |
 
 ## Scenario Results
 
-| Scenario             | Smoothed Y | Correlation | Fraction | CV Scores  | Notes                         |
-|----------------------|------------|-------------|----------|------------|-------------------------------|
-| basic                | ACCEPTABLE | 1.000000    | MATCH    | —          | Max diff: 0.0013              |
-| small_fraction       | ACCEPTABLE | 0.999999    | MATCH    | —          | Max diff: 0.0026              |
-| no_robust            | MATCH      | 1.000000    | MATCH    | —          | Perfect match (no robustness) |
-| more_robust          | ACCEPTABLE | 1.000000    | MATCH    | —          | Max diff: 0.0020              |
-| auto_converge        | ACCEPTABLE | 0.999999    | MATCH    | —          | Iterations: 3 vs 6 (faster)   |
-| cross_validate       | MISMATCH   | 0.963314    | MISMATCH | MISMATCH   | Simple CV scoring differs     |
-| kfold_cv             | ACCEPTABLE | 0.999999    | MATCH    | ACCEPTABLE | Max diff: 0.0003              |
-| loocv                | ACCEPTABLE | 1.000000    | MATCH    | ACCEPTABLE | Max diff: 0.0002              |
-| delta_zero           | ACCEPTABLE | 1.000000    | MATCH    | —          | Max diff: 0.0013              |
-| with_all_diagnostics | ACCEPTABLE | 1.000000    | MATCH    | —          | See diagnostics below         |
-
-## Diagnostics (with_all_diagnostics scenario)
-
-| Metric             | Status     | Max Diff |
-|--------------------|------------|----------|
-| RMSE               | ACCEPTABLE | 3.5e-05  |
-| MAE                | ACCEPTABLE | 0.00016  |
-| Residual SD        | ACCEPTABLE | 0.0018   |
-| R²                 | MISMATCH   | 0.015    |
-| Residuals          | ACCEPTABLE | 0.0013   |
-| Robustness Weights | ACCEPTABLE | 0.024    |
-
-## Known Differences
-
-### Auto-Convergence Iterations (6 vs 3)
-
-**Not a bug.** The Rust implementation converges faster due to more efficient stability checks.
-
-### Simple Cross-Validate Scoring
-
-**Expected difference.** The simple CV method uses different aggregation. K-fold and LOOCV match closely.
-
-### R² Calculation
-
-Minor difference (0.015) due to variance calculation methodology. Does not affect practical usage.
+| Scenario               | Status      | Max Diff   | RMSE       |
+|------------------------|-------------|------------|------------|
+| 01_tiny_linear         | EXACT MATCH | 5.77e-15   | 3.49e-15   |
+| 02_small_quadratic     | EXACT MATCH | 9.99e-16   | 4.27e-16   |
+| 03_sine_standard       | EXACT MATCH | 2.00e-15   | 8.40e-16   |
+| 04_sine_robust         | EXACT MATCH | 2.22e-15   | 9.20e-16   |
+| 05_degree_0            | EXACT MATCH | 3.05e-15   | 1.06e-15   |
+| 06_large_scale         | EXACT MATCH | 2.28e-15   | 8.57e-16   |
+| 07_high_smoothness     | EXACT MATCH | 5.77e-15   | 3.14e-15   |
+| 08_low_smoothness      | EXACT MATCH | 1.67e-15   | 5.74e-16   |
+| 09_quadratic_robust    | EXACT MATCH | 8.33e-15   | 1.31e-15   |
+| 10_constant            | EXACT MATCH | 6.22e-15   | 1.99e-15   |
+| 11_step_func           | EXACT MATCH | 2.11e-15   | 5.88e-16   |
+| 12_end_effects_left    | EXACT MATCH | 8.88e-15   | 3.42e-15   |
+| 13_end_effects_right   | EXACT MATCH | 8.88e-15   | 3.42e-15   |
+| 14_sparse_data         | EXACT MATCH | 6.54e-13   | 3.02e-13   |
+| 15_dense_data          | EXACT MATCH | 2.63e-14   | 2.47e-15   |
+| 16_degree_2_sine       | EXACT MATCH | 2.41e-15   | 9.83e-16   |
+| 17_robust_degree_0     | EXACT MATCH | 1.18e-14   | 5.34e-15   |
+| 18_iter_2              | EXACT MATCH | 2.14e-15   | 8.76e-16   |
+| 19_interpolate_exact   | EXACT MATCH | 7.55e-15   | 3.14e-15   |
+| 20_zero_variance       | EXACT MATCH | 5.33e-15   | 2.14e-15   |
 
 ## Conclusion
 
-The Rust `lowess` crate is a **highly accurate drop-in alternative** to `statsmodels`:
+The Rust `loess-rs` crate is a **numerical twin** to R's `loess` implementation:
 
-1. **Identical Results**: Within < 0.005 tolerance for all core scenarios
-2. **Faster Convergence**: 2× fewer iterations for robust smoothing
-
-*Test date: 2025-12-17 | lowess v0.4.1*
+1. **Floating Point Precision**: Differences are within machine epsilon noise (< 1e-14 for most cases).
+2. **Robustness Correctness**: Robust iterations produce identical weights and smoothed values.
+3. **Algorithmic Fidelity**: Handling of edge cases (constant values, zero variance, end effects) is identical.
