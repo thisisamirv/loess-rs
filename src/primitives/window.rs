@@ -27,7 +27,6 @@
 //!
 //! ## Non-goals
 //!
-//! * This module does not handle data sorting (handled by `sorting` module).
 //! * This module does not perform the regression itself (handled by `regression` module).
 
 // External dependencies

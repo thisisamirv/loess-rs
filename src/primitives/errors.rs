@@ -76,7 +76,7 @@ pub enum LoessError {
     /// Smoothing fraction must be in the range (0, 1].
     InvalidFraction(f64),
 
-    /// Local regression requires at least 1 iteration.
+    /// Robustness iterations (0 means initial fit only).
     InvalidIterations(usize),
 
     /// Interval coverage level must be strictly between 0 and 1.

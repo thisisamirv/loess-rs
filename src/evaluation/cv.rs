@@ -234,7 +234,7 @@ impl CVKind {
     /// # Implementation notes
     ///
     /// * Uses binary search for O(log n) bracketing
-    /// * Handles duplicate x-values by averaging y-values
+    /// * Handles bracketing points with identical x-values by averaging their y-values
     /// * Constant extrapolation prevents unbounded predictions
     pub fn interpolate_prediction<T: Float>(x_train: &[T], y_train: &[T], x_new: T) -> T {
         let n = x_train.len();
@@ -278,7 +278,7 @@ impl CVKind {
 
         let denom = x1 - x0;
         if denom <= T::zero() {
-            // Duplicate x-values: return average of y-values
+            // X-values are identical: return average of y-bracketing points
             return (y0 + y1) / T::from(2.0).unwrap();
         }
 
@@ -291,7 +291,6 @@ impl CVKind {
     /// # Implementation notes
     ///
     /// * Leverages sorted order of `x_new` for O(n_train + n_new) linear scan.
-    /// * Falls back to repeated binary search if `x_new` is not monotonic (not recommended).
     pub fn interpolate_prediction_batch<T: Float>(
         x_train: &[T],
         y_train: &[T],

@@ -245,8 +245,8 @@
 //!
 //! | Parameter                     | Default                                       | Range/Options        | Description                                      | Adapter          |
 //! |-------------------------------|-----------------------------------------------|----------------------|--------------------------------------------------|------------------|
-//! | **fraction**                  | 0.67 (or CV-selected)                         | (0, 1]               | Smoothing span (fraction of data used per fit)   | All              |
-//! | **iterations**                | 3                                             | [0, 1000]            | Number of robustness iterations                  | All              |
+//! | **fraction**                  | (varies by adapter)                           | (0, 1]               | Smoothing span (fraction of data used per fit)   | All              |
+//! | **iterations**                | (varies by adapter)                           | [0, 1000]            | Number of robustness iterations                  | All              |
 //! | **weight_function**           | `Tricube`                                     | 7 kernel options     | Distance weighting kernel                        | All              |
 //! | **robustness_method**         | `Bisquare`                                    | 3 methods            | Outlier downweighting method                     | All              |
 //! | **zero_weight_fallback**      | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
@@ -254,7 +254,7 @@
 //! | **boundary_policy**           | `Extend`                                      | 4 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
 //! | **auto_convergence**          | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
 //! | **return_robustness_weights** | false                                         | true/false           | Include final weights in output                  | All              |
-//! | **degree**                    | `Linear`                                      | 0, 1, 2              | Polynomial degree (constant, linear, quadratic)  | All              |
+//! | **degree**                    | `Linear`                                      | 0, 1, 2, 3, 4        | Polynomial degree (constant to quartic)          | All              |
 //! | **dimensions**                | 1                                             | [1, ∞)               | Number of predictor dimensions                   | All              |
 //! | **distance_metric**           | `Euclidean`                                   | 2 metrics            | Distance metric for nD data                      | All              |
 //! | **surface_mode**              | `Interpolation`                               | 2 modes              | Surface evaluation mode (speed vs accuracy)      | All              |
@@ -272,6 +272,11 @@
 //! | **update_mode**               | `Incremental`                                 | 2 modes              | Online update strategy (Incremental vs Full)     | Online           |
 //! | **window_capacity**           | 1000                                          | [3, ∞)               | Maximum points in sliding window                 | Online           |
 //! | **min_points**                | 3                                             | [2, window_capacity] | Minimum points before smoothing starts           | Online           |
+//!
+//! > **Note on Defaults**: Some parameters have different defaults depending on the adapter:
+//! > - **Batch**: `fraction = 0.67`, `iterations = 3`
+//! > - **Streaming**: `fraction = 0.1`, `iterations = 2`
+//! > - **Online**: `fraction = 0.2`, `iterations = 1`
 //!
 //! ### Parameter Options Reference
 //!
@@ -343,11 +348,11 @@
 //!
 //! Choose the right execution mode based on your use case:
 //!
-//! | Adapter     | Use Case                                                                    | Features                                                                         | Limitations                                                               |
-//! |-------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------|
-//! | `Batch`     | Complete datasets in memory<br>Standard analysis<br>Full diagnostics needed | All features supported                                                           | Requires entire dataset in memory<br>Not suitable for very large datasets |
-//! | `Streaming` | Large datasets (>100K points)<br>Limited memory<br>Batch pipelines          | Chunked processing<br>Configurable overlap<br>Robustness iterations<br>Residuals | No intervals<br>No cross-validation<br>No diagnostics                     |
-//! | `Online`    | Real-time data<br>Sensor streams<br>Embedded systems                        | Incremental updates<br>Sliding window<br>Memory-bounded                          | No intervals<br>No cross-validation<br>Limited history                    |
+//! | Adapter     | Use Case                                                                    | Features                                                                                        | Limitations                                                               |
+//! |-------------|-----------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
+//! | `Batch`     | Complete datasets in memory<br>Standard analysis<br>Full diagnostics needed | All features supported                                                                          | Requires entire dataset in memory<br>Not suitable for very large datasets |
+//! | `Streaming` | Large datasets (>100K points)<br>Limited memory<br>Batch pipelines          | Chunked processing<br>Configurable overlap<br>Robustness iterations<br>Residuals<br>Diagnostics | No intervals<br>No cross-validation                                       |
+//! | `Online`    | Real-time data<br>Sensor streams<br>Embedded systems                        | Incremental updates<br>Sliding window<br>Memory-bounded<br>Residuals<br>Robustness              | No intervals<br>No cross-validation<br>Limited history                    |
 //!
 //! **Recommendation:**
 //! - **Start with Batch** for most use cases - it's the most feature-complete
@@ -1426,7 +1431,7 @@ mod math;
 //
 // Contains the implementations of local regression (via `RegressionContext`),
 // robustness weighting (`Bisquare`, `Huber`, `Talwar`), and
-// interpolation/delta optimization.
+// interpolation.
 mod algorithms;
 
 // Layer 4: Evaluation - post-processing and diagnostics.

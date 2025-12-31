@@ -138,10 +138,10 @@ pub struct LoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug +
     /// Number of predictor dimensions (default: 1).
     pub dimensions: Option<usize>,
 
-    /// Distance metric for nD neighborhood computation.
+    /// Distance metric for nD neighborhood computation (default: Euclidean).
     pub distance_metric: Option<DistanceMetric<T>>,
 
-    /// Surface evaluation mode (Interpolation or Direct).
+    /// Surface evaluation mode (default: Interpolation).
     pub surface_mode: Option<SurfaceMode>,
 
     /// Cell size for interpolation subdivision (default: 0.2).
@@ -437,7 +437,9 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
     ///
     /// - `Constant` (degree 0): Weighted mean - fastest, least flexible
     /// - `Linear` (degree 1, default): Standard LOESS - good balance
-    /// - `Quadratic` (degree 2): Better for curved regions, more expensive
+    /// - `Quadratic` (degree 2): Better for curved regions
+    /// - `Cubic` (degree 3): Higher flexibility for complex surfaces
+    /// - `Quartic` (degree 4): Maximum flexibility, most expensive
     pub fn degree(mut self, degree: PolynomialDegree) -> Self {
         if self.polynomial_degree.is_some() {
             self.duplicate_param = Some("degree");

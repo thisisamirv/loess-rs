@@ -411,7 +411,7 @@ pub fn accumulate_2d_quadratic_simd(
 
             s_dx4 += wdx2 * dx2;
             s_dx3dy += wdx2 * dxdy; // w * dx^2 * dx * dy = w * dx^3 * dy
-            s_dx2dy2 += wdy2 * dy2;
+            s_dx2dy2 += wdy2 * dx2;
             s_dxdy3 += wdy2 * dxdy;
             s_dy4 += wdy2 * dy2;
 

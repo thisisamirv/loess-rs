@@ -30,5 +30,5 @@ pub mod regression;
 /// Robustness weight updates for outlier downweighting.
 pub mod robustness;
 
-/// Interpolation and delta optimization utilities.
+/// Interpolation utilities.
 pub mod interpolation;

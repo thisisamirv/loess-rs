@@ -11,7 +11,7 @@
 //!
 //! * **Strategy**: Processes data in fixed-size chunks with configurable overlap.
 //! * **Merging**: Merges overlapping regions using configurable strategies (Average, Weighted).
-//! * **Sorting**: Automatically sorts data within each chunk.
+//! * **Order**: Processes chunks in stream order; preserves input order within chunks.
 //! * **Generics**: Generic over `Float` types.
 //!
 //! ## Key concepts
@@ -471,7 +471,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             )?;
         }
 
-        // Execute LOESS on combined data
+        // Execute LOESS on combined data (KD-Tree handles unsorted data)
         let config = LoessConfig {
             fraction: Some(self.config.fraction),
             iterations: self.config.iterations,
@@ -604,9 +604,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             self.overlap_buffer_robustness_weights.clear();
         }
 
-        // Note: We return results in sorted order (by x) for streaming chunks.
-        // Unsorting partial results is ambiguous since we only return a subset of the chunk.
-        // The full batch adapter handles global unsorting when processing complete datasets.
+        // Note: We return results in the order they were processed (combined chunk/overlap).
+        // The KD-tree implementation does not require data to be globally sorted.
         let return_start_x = return_start * dimensions;
         let x_out_len = y_smooth_out.len() * dimensions;
         let x_out = combined_x[return_start_x..return_start_x + x_out_len].to_vec();

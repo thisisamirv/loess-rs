@@ -1,9 +1,16 @@
 //! Generic Solvers and Term Generation
 //!
-//! ## Purpose
+//! ## Design notes
 //!
-//! This module implements the strategy pattern for polynomial term generation
-//! and provides fallback accumulation logic for arbitrary dimensions and degrees.
+//! * Uses a fixed stack buffer (size 64) for terms during generic accumulation
+//!   to avoid heap allocations in the inner loop. This imposes a practical
+//!   limit on the complexity of generic regression (e.g., high-dimensional
+//!   quadratic fits).
+//!
+//! ## Features
+//!
+//! - Trait-based term generation for different polynomial degrees.
+//! - Generic accumulation logic for arbitrary dimensions.
 
 // External dependencies
 use core::marker::PhantomData;
@@ -56,23 +63,6 @@ impl<'a, T: Float> TermGenerator<T> for GenericTermGenerator<'a, T> {
     #[inline(always)]
     fn generate(&self, point: &[T], query: &[T], out: &mut [T]) {
         self.degree.build_terms(point, query, out);
-    }
-}
-
-/// Specialized Generator for 3D Linear (Terms: 1, x, y, z).
-pub struct Linear3DTermGenerator;
-impl<T: Float> TermGenerator<T> for Linear3DTermGenerator {
-    #[inline(always)]
-    fn n_coeffs(&self) -> usize {
-        4
-    }
-
-    #[inline(always)]
-    fn generate(&self, point: &[T], query: &[T], out: &mut [T]) {
-        out[0] = T::one();
-        out[1] = point[0] - query[0];
-        out[2] = point[1] - query[1];
-        out[3] = point[2] - query[2];
     }
 }
 

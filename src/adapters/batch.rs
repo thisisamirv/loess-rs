@@ -9,15 +9,12 @@
 //! ## Design notes
 //!
 //! * **Processing**: Processes entire dataset in a single pass.
-//! * **Sorting**: Automatically sorts data by x-values and unsorts results.
 //! * **Delegation**: Delegates computation to the execution engine.
 //! * **Generics**: Generic over `Float` types.
 //!
 //! ## Key concepts
 //!
-//! * **Batch Processing**: Validates, sorts, filters, executes, and unsorts.
-//! * **Builder Pattern**: Fluent API for configuration with sensible defaults.
-//! * **Automatic Sorting**: Ensures x-values are sorted for the algorithm.
+//! * **Batch Processing**: Validates, filters, and executes in a single pass.
 //!
 //! ## Invariants
 //!
@@ -134,6 +131,10 @@ pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Evaluation mode (default: Interpolation)
     pub surface_mode: SurfaceMode,
 
+    /// Tracks if any parameter was set multiple times (for validation)
+    #[doc(hidden)]
+    pub(crate) duplicate_param: Option<&'static str>,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -160,10 +161,6 @@ pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Parallel execution hint.
     #[doc(hidden)]
     pub parallel: Option<bool>,
-
-    /// Tracks if any parameter was set multiple times (for validation)
-    #[doc(hidden)]
-    pub(crate) duplicate_param: Option<&'static str>,
 }
 
 impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Default
@@ -425,7 +422,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
 
         // Check grid resolution only for interpolation mode
         if self.config.surface_mode == SurfaceMode::Interpolation {
-            let n = y.len() / self.config.dimensions;
+            let n = y.len();
             let cell_to_use = self.config.cell.unwrap_or(0.2);
             let limit = self.config.interpolation_vertices.unwrap_or(n);
             let cell_provided = self.config.cell.is_some();

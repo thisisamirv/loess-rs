@@ -2,7 +2,7 @@
 //!
 //! ## Purpose
 //!
-//! This module defines the `Backend` enum used by extension crates (like `fastLoess`)
+//! This module defines the `Backend` enum used by extension crates
 //! to select computational backends at runtime. The core `loess-rs` crate does not
 //! implement GPU acceleration directly; this serves as a configuration placeholder
 //! for downstream crates.

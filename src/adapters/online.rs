@@ -499,7 +499,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         // Choose update strategy based on configuration
         let (smoothed, std_err, rob_weight) = match self.config.update_mode {
             UpdateMode::Incremental => {
-                // Incremental mode: use full LOESS but only return the latest point's value
+                // Incremental mode: single-pass fit (no robustness) for maximum performance.
                 let n = x_vec.len() / self.config.dimensions;
                 let cell_to_use = self.config.cell.unwrap_or(0.2);
                 let limit = self.config.interpolation_vertices.unwrap_or(n);

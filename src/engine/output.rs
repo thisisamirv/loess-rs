@@ -11,7 +11,7 @@
 //! * **Memory Efficiency**: All optional outputs use `Option<Vec<T>>`.
 //! * **Generics**: Results are generic over `Float` types.
 //! * **Ergonomics**: Implements `Display` for human-readable output.
-//! * **Consistency**: Sorted x-values are stored to maintain correspondence.
+//! * **Consistency**: Input x-values are stored to maintain correspondence.
 //!
 //! ## Key concepts
 //!
@@ -22,7 +22,7 @@
 //! ## Invariants
 //!
 //! * All populated vectors have the same length as the input data.
-//! * x-values are sorted in monotonically increasing order.
+//! * x-values maintain the original input order (not guaranteed to be sorted for nD).
 //! * Lower bounds are always less than or equal to upper bounds for all intervals.
 //! * Robustness weights are always in the range [0, 1].
 //!
@@ -55,7 +55,7 @@ use crate::math::distance::DistanceMetric;
 /// Comprehensive LOESS output containing smoothed values and diagnostics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoessResult<T> {
-    /// Sorted x-values (independent variable). Flattened for nD.
+    /// Input x-values (independent variable). Flattened for nD.
     pub x: Vec<T>,
 
     /// Number of predictor dimensions.

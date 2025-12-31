@@ -81,7 +81,7 @@ pub trait PointDistance<T: Float> {
     fn split_distance_squared(&self, dim: usize, split_val: T, query_val: T) -> T;
 
     /// Convert a distance from the comparison space (e.g., squared) to the actual metric space.
-    /// For Euclidean, this computes `sqrt`. For Manhattan, it is identity.
+    /// For Euclidean or Manhattan, this computes `sqrt` from the squared distance.
     fn post_process_distance(&self, d: T) -> T;
 }
 
@@ -92,7 +92,7 @@ pub trait PointDistance<T: Float> {
 /// Result container for k-nearest neighbor search.
 #[derive(Debug, Clone)]
 pub struct Neighborhood<T> {
-    /// Indices of the k nearest neighbors (sorted by distance, ascending).
+    /// Indices of the k nearest neighbors (unordered).
     pub indices: Vec<usize>,
     /// Distances to each neighbor (corresponding to indices).
     pub distances: Vec<T>,

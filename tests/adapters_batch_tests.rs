@@ -716,3 +716,42 @@ fn test_batch_insufficient_vertices() {
         Ok(_) => panic!("Should have failed validation"),
     }
 }
+
+// ============================================================================
+// Multi-dimensional Tests
+// ============================================================================
+
+/// Test 2D LOESS smoothing with the Batch adapter.
+/// This verifies the fix for point count calculation in multi-dimensional data.
+#[test]
+fn test_batch_2d_smoothing() {
+    let nx = 10;
+    let ny = 10;
+    let mut x = Vec::with_capacity(nx * ny * 2);
+    let mut y = Vec::with_capacity(nx * ny);
+
+    for i in 0..nx {
+        for j in 0..ny {
+            x.push(i as f64);
+            x.push(j as f64);
+            y.push((i as f64).sin() + (j as f64).cos());
+        }
+    }
+
+    let result = Loess::new()
+        .dimensions(2)
+        .fraction(0.3)
+        .interpolation_vertices(100)
+        .adapter(Batch)
+        .build()
+        .unwrap()
+        .fit(&x, &y)
+        .expect("2D batch smoothing should succeed");
+
+    assert_eq!(
+        result.y.len(),
+        y.len(),
+        "Output length should match input response length"
+    );
+    assert!(result.y.iter().all(|v| v.is_finite()));
+}

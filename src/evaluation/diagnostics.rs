@@ -24,7 +24,7 @@
 //!
 //! * Error metrics (RMSE, MAE, RSS) and df_eff are non-negative.
 //! * R^2 <= 1 (R^2 = 1 is a perfect fit).
-//! * Residual SD is robustly estimated using MAD/1.4826.
+//! * Residual SD is robustly estimated using MAD * 1.4826 (Direct mode) or standard variance (Streaming).
 //!
 //! ## Non-goals
 //!

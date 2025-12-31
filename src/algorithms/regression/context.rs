@@ -21,7 +21,7 @@ use crate::math::neighborhood::Neighborhood;
 use crate::primitives::buffer::FittingBuffer;
 
 // Module dependencies
-use super::generic::{self, GenericTermGenerator, Linear3DTermGenerator};
+use super::generic::{self, GenericTermGenerator};
 use super::specialized::SolverLinalg;
 use super::types::{PolynomialDegree, ZeroWeightFallback};
 
@@ -366,7 +366,6 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
                         &mut b,
                     );
                     buf.xtw_x[..16].copy_from_slice(&a);
-                    buf.xtw_x[..16].copy_from_slice(&a);
                     buf.xtw_y[..4].copy_from_slice(&b);
                 }
                 (3, PolynomialDegree::Quadratic) => {
@@ -599,16 +598,21 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
                 xtw_y[..6].copy_from_slice(&b);
             }
             (3, PolynomialDegree::Linear) => {
-                generic::accumulate_normal_equations(
+                let mut a = [T::zero(); 16];
+                let mut b = [T::zero(); 4];
+                T::accumulate_3d_linear(
                     self.x,
                     self.y,
                     &self.neighborhood.indices,
                     weights,
-                    Linear3DTermGenerator,
-                    query_point,
-                    xtw_x,
-                    xtw_y,
+                    query_point[0],
+                    query_point[1],
+                    query_point[2],
+                    &mut a,
+                    &mut b,
                 );
+                xtw_x[..16].copy_from_slice(&a);
+                xtw_y[..4].copy_from_slice(&b);
             }
             _ => {
                 let term_gen =

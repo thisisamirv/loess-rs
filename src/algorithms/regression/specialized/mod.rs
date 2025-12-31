@@ -3,7 +3,8 @@
 //! ## Purpose
 //!
 //! This module provides high-performance, specialized solvers and accumulation
-//! logic for common low-dimensional cases (1D and 2D linear/quadratic regression).
+//! logic for common low-dimensional cases (1D, 2D, and 3D linear, quadratic,
+//! and cubic specialized regression).
 
 // External dependencies
 use num_traits::Float;

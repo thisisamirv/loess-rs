@@ -23,6 +23,10 @@ git checkout -b feature/your-feature
 make build      # Build std, no-std, and dev variants
 make test       # Run test suite for both std and no-std
 make check      # Run all checks (fmt, clippy, build, test, doc)
+make fmt        # Check formatting
+make doc        # Build documentation
+make examples   # Run all examples
+make coverage   # Generate coverage report (requires cargo-llvm-cov)
 ```
 
 A `dev` feature flag is used to expose internal modules and advanced extensibility points for testing and development. These features are explicitly handled via the `Makefile` (e.g., `make build-dev`, `make test-dev`).

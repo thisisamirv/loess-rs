@@ -8,7 +8,7 @@
 //!
 //! ## Design notes
 //!
-//! * **Estimation**: Uses MAD (Median Absolute Deviation) for robust scale estimation.
+//! * **Estimation**: Uses MAD (Median Absolute Deviation) for robust scale estimation with a Mean Absolute Error (MAE) fallback for numerical stability near zero.
 //! * **Methods**: Implements Bisquare (default), Huber, and Talwar.
 //! * **Generics**: Generic over `Float` types.
 //!
@@ -128,6 +128,9 @@ impl RobustnessMethod {
     // ========================================================================
 
     /// Compute robust scale estimate with zero-scale safety fallback.
+    ///
+    /// If the robust (Median-based) scale is zero or extremely small, this method
+    /// falls back to the Mean Absolute Error (MAE) to ensure numerical stability.
     fn compute_scale<T: Float>(
         &self,
         residuals: &[T],

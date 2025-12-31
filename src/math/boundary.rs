@@ -14,7 +14,7 @@
 //! ## Key concepts
 //!
 //! * **Boundary Effect**: The tendency for local regression to have higher bias at edges.
-//! * **Padding strategies**: `Extend` (repeat edge), `Reflect` (mirror), `Zero` (pad 0).
+//! * **Padding strategies**: `Extend` (extrapolate x, repeat y), `Reflect` (mirror), `Zero` (pad 0).
 //!
 //! ## Invariants
 //!
@@ -39,7 +39,7 @@ use num_traits::Float;
 /// Policy for handling boundaries at the start and end of a data stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoundaryPolicy {
-    /// Replicate edge values to provide context for boundary points.
+    /// Linearly extrapolate x-values and replicate y-values to provide context.
     #[default]
     Extend,
 

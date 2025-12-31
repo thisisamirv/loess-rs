@@ -14,15 +14,13 @@
 //! * Handles cross-validation for automatic fraction selection.
 //! * Supports auto-convergence for adaptive iteration counts.
 //! * Manages working buffers efficiently to minimize allocations.
-//! * Uses delta optimization for performance on dense data.
 //! * Separates concerns: fitting, interpolation, robustness, convergence.
 //! * Generic over `Float` types to support f32 and f64.
 //!
 //! ## Key concepts
 //!
-//! * **Execution Loop**: The central iteration cycle (Fit -> Residuals -> Weights -> Repeat).
-//! * **Auto-convergence**: Dynamically stopping iterations when parameters stabilize.
-//! * **Delta Optimization**: Skipping expensive re-fitting for nearby points.
+//! * Execution loop: The central iteration cycle (Fit -> Residuals -> Weights -> Repeat).
+//! * Auto-convergence: Dynamically stopping iterations when parameters stabilize.
 //!
 //! ## Invariants
 //!
@@ -159,7 +157,6 @@ pub type SmoothPassFn<T> = fn(
     &[T],               // x
     &[T],               // y
     usize,              // window_size
-    T,                  // delta (interpolation optimization threshold)
     bool,               // use_robustness
     &[T],               // robustness_weights
     &mut [T],           // output (y_smooth)
@@ -1126,7 +1123,11 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 T::batch_sqrt_scale(lev, sigma, &mut se_vec);
                 Some(se_vec)
             } else {
-                // Fallback to approximate leverage (for Interpolation mode)
+                // Fallback to approximate leverage (for Interpolation mode).
+                // NOTE: This is a coarse heuristic based on the smoothing fraction.
+                // It assumes uniform leverage across all points, which is rarely true
+                // but provides a stable baseline for standard errors when local
+                // hat matrix diagonals are not available.
                 T::batch_abs_residuals(
                     &y[..n],
                     &y_smooth[..n],
