@@ -732,7 +732,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         }
 
         // For higher dimensions, use tensor Hermite interpolation
-        // TODO: For now, fallback to multilinear for nD (can be enhanced later)
+        // This provides C1 continuity across cell boundaries compared to multilinear interpolation
         self.hermite_tensor_interpolation(cell, query)
     }
 

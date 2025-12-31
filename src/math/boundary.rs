@@ -157,16 +157,14 @@ impl BoundaryPolicy {
             return (px, py, full_mapping);
         }
 
-        if *self == BoundaryPolicy::Extend
-            || *self == BoundaryPolicy::NoBoundary
-            || (d > 1 && *self == BoundaryPolicy::Zero)
-        {
-            // TODO: Zero padding in nD is tricky without a clear "outside".
-            // We'll skip extending for now or implement if needed.
-            return (x.to_vec(), y.to_vec(), mapping);
-        }
+        // Unified nD boundary handling
+        if d > 1 {
+            // Extend in nD is ambiguous (constant plane vs gradient extension).
+            // Default to NoBoundary behavior to preserve regression accuracy for now.
+            if *self == BoundaryPolicy::NoBoundary || *self == BoundaryPolicy::Extend {
+                return (x.to_vec(), y.to_vec(), mapping);
+            }
 
-        if *self == BoundaryPolicy::Reflect && d > 1 {
             let mut px = x.to_vec();
             let mut py = y.to_vec();
             let mut p_mapping = mapping;
@@ -178,37 +176,59 @@ impl BoundaryPolicy {
                 let mut indices: Vec<usize> = (0..n).collect();
                 indices.sort_by(|&a, &b| x[a * d + j].partial_cmp(&x[b * d + j]).unwrap_or(Equal));
 
-                // Min boundary reflection
-                let min_val = x[indices[0] * d + j];
-                for &idx in indices.iter().take(pad_count) {
-                    let mut new_point = vec![T::zero(); d];
-                    for k in 0..d {
-                        if k == j {
-                            new_point[k] = min_val - (x[idx * d + j] - min_val);
-                        } else {
-                            new_point[k] = x[idx * d + k];
-                        }
-                    }
-                    px.extend_from_slice(&new_point);
-                    py.push(y[idx]);
-                    p_mapping.push(idx);
-                }
+                // Helper to add padded points
+                let mut add_padding = |idx_list: &[usize], is_min: bool| {
+                    let boundary_val = if is_min {
+                        x[indices[0] * d + j]
+                    } else {
+                        x[indices[n - 1] * d + j]
+                    };
 
-                // Max boundary reflection
-                let max_val = x[indices[n - 1] * d + j];
-                for &idx in indices.iter().skip(n - pad_count).take(pad_count) {
-                    let mut new_point = vec![T::zero(); d];
-                    for k in 0..d {
-                        if k == j {
-                            new_point[k] = max_val + (max_val - x[idx * d + j]);
-                        } else {
-                            new_point[k] = x[idx * d + k];
+                    for &idx in idx_list {
+                        // Skip points that are essentially ON the boundary to avoid duplication
+                        if (x[idx * d + j] - boundary_val).abs() <= T::epsilon() {
+                            continue;
                         }
+
+                        // Generate geometry by reflection (standard way to create "outside" points)
+                        let mut new_point = vec![T::zero(); d];
+                        for k in 0..d {
+                            if k == j {
+                                // Mirror across boundary plane
+                                if is_min {
+                                    new_point[k] = boundary_val - (x[idx * d + j] - boundary_val);
+                                } else {
+                                    new_point[k] = boundary_val + (boundary_val - x[idx * d + j]);
+                                }
+                            } else {
+                                new_point[k] = x[idx * d + k];
+                            }
+                        }
+                        px.extend_from_slice(&new_point);
+
+                        // Determine Y value based on policy
+                        let y_val = match self {
+                            BoundaryPolicy::Zero => T::zero(),
+                            BoundaryPolicy::Reflect => y[idx],
+                            _ => unreachable!(),
+                        };
+                        py.push(y_val);
+                        p_mapping.push(idx);
                     }
-                    px.extend_from_slice(&new_point);
-                    py.push(y[idx]);
-                    p_mapping.push(idx);
-                }
+                };
+
+                // Min boundary
+                let min_indices: Vec<usize> = indices.iter().take(pad_count).copied().collect();
+                add_padding(&min_indices, true);
+
+                // Max boundary
+                let max_indices: Vec<usize> = indices
+                    .iter()
+                    .skip(n - pad_count)
+                    .take(pad_count)
+                    .copied()
+                    .collect();
+                add_padding(&max_indices, false);
             }
             return (px, py, p_mapping);
         }

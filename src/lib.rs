@@ -98,6 +98,8 @@
 //!     .weight_function(Tricube)                        // Kernel function
 //!     .robustness_method(Bisquare)                     // Outlier handling
 //!     .surface_mode(Interpolation)                     // Surface evaluation mode
+//!     .boundary_policy(Extend)                         // Boundary handling
+//!     .scaling_method(MAD)                             // Scaling method
 //!     .cell(0.2)                                       // Interpolation cell size
 //!     .interpolation_vertices(1000)                    // Maximum vertices for interpolation
 //!     .zero_weight_fallback(UseLocalMean)              // Fallback policy
@@ -726,7 +728,7 @@
 //! - **`Extend`** (default): Pad with constant values (first/last y-value)
 //! - **`Reflect`**: Mirror the data at boundaries
 //! - **`Zero`**: Pad with zeros
-//! - **`NoBoundary`**: Do not pad the data
+//! - **`NoBoundary`**: Do not pad the data (original Cleveland behavior)
 //!
 //! ```rust
 //! use loess_rs::prelude::*;
@@ -749,6 +751,10 @@
 //! - Use `Reflect` for periodic or symmetric data
 //! - Use `Zero` when data naturally approaches zero at boundaries
 //! - Use `NoBoundary` to disable padding
+//!
+//! > **Note:** For nD (multivariate) data, `Extend` currently defaults to `NoBoundary` behavior
+//! > to preserve regression accuracy, as constant extension can distort local gradients.
+//! > `Reflect` and `Zero` are fully supported in nD.
 //!
 //! ### Auto-Convergence
 //!
