@@ -155,9 +155,9 @@ impl<T: Float> Default for Neighborhood<T> {
 /// Compressed node structure for Eytzinger layout.
 /// Reduced to 8 bytes to maximize cache line efficiency.
 #[derive(Debug, Clone, Copy, Default)]
-struct KDNode {
+pub struct KDNode {
     /// Index of the point in the original flattened data array.
-    index: usize,
+    pub index: usize,
 }
 
 /// KD-tree for spatial indexing of nD points.
@@ -201,6 +201,18 @@ impl<T: Float> KDTree<T> {
         Self {
             nodes,
             points: permuted_points,
+            dimensions,
+        }
+    }
+
+    /// Create a KD-tree from pre-built parts.
+    ///
+    /// This allows external builders (e.g., parallel ones) to construct the tree.
+    /// The nodes and points must follow the Eytzinger layout convention.
+    pub fn from_parts(nodes: Vec<KDNode>, points: Vec<T>, dimensions: usize) -> Self {
+        Self {
+            nodes,
+            points,
             dimensions,
         }
     }
@@ -307,32 +319,6 @@ impl<T: Float> KDTree<T> {
             permuted_points,
             2 * curr_idx + 2,
         );
-    }
-
-    /// Calculate number of nodes in the left subtree of a left-complete binary tree of size N.
-    fn calculate_left_subtree_size(n: usize) -> usize {
-        if n == 0 {
-            return 0;
-        }
-        // Height: H = floor(log2(n))
-        let h = (usize::BITS - n.leading_zeros() - 1) as usize;
-        if h == 0 {
-            return 0;
-        }
-
-        // Max nodes in full tree of height h
-        let max_leaf_capacity = 1 << h; // 2^h
-
-        // Nodes in last level R = n - (nodes in full tree of height h-1)
-        let total_nodes_above_leaf = max_leaf_capacity - 1;
-        let r = n - total_nodes_above_leaf;
-
-        // Left subtree gets the filled portion of the last level
-        let left_part_leaves = r.min(max_leaf_capacity / 2);
-
-        // Full left subtree excluding leaves
-        let left_subtree_capacity_full = (max_leaf_capacity / 2) - 1;
-        left_subtree_capacity_full + left_part_leaves
     }
 
     /// Iterative search using an explicit stack for traversal.
@@ -444,5 +430,31 @@ impl<T: Float> KDTree<T> {
                 stack.push(near_packed);
             }
         }
+    }
+
+    /// Calculate number of nodes in the left subtree of a left-complete binary tree of size N.
+    pub fn calculate_left_subtree_size(n: usize) -> usize {
+        if n == 0 {
+            return 0;
+        }
+        // Height: H = floor(log2(n))
+        let h = (usize::BITS - n.leading_zeros() - 1) as usize;
+        if h == 0 {
+            return 0;
+        }
+
+        // Max nodes in full tree of height h
+        let max_leaf_capacity = 1 << h; // 2^h
+
+        // Nodes in last level R = n - (nodes in full tree of height h-1)
+        let total_nodes_above_leaf = max_leaf_capacity - 1;
+        let r = n - total_nodes_above_leaf;
+
+        // Left subtree gets the filled portion of the last level
+        let left_part_leaves = r.min(max_leaf_capacity / 2);
+
+        // Full left subtree excluding leaves
+        let left_subtree_capacity_full = (max_leaf_capacity / 2) - 1;
+        left_subtree_capacity_full + left_part_leaves
     }
 }

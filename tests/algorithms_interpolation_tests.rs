@@ -75,6 +75,7 @@ fn test_build_simple_1d() {
         neighborhood,
         fitting_buffer,
         0.2,
+        None,
     );
 
     assert!(surface.vertex_data.len() >= 4); // At least 2 vertices * 2 values each
@@ -134,6 +135,7 @@ fn test_build_simple_2d() {
         neighborhood,
         fitting_buffer,
         0.2,
+        None,
     );
 
     // Initial cell has 4 vertices (2^2)
@@ -182,6 +184,7 @@ fn test_interpolate_1d_linear() {
         neighborhood,
         fitting_buffer,
         0.2,
+        None,
     );
 
     // Test points
@@ -231,6 +234,7 @@ fn test_interpolate_2d_bilinear() {
         neighborhood,
         fitting_buffer,
         0.2,
+        None,
     );
 
     // Evaluate at center (1, 1) -> 2(1) + 3(1) + 1 = 6
@@ -287,6 +291,7 @@ fn test_adaptive_subdivision() {
         neighborhood,
         fitting_buffer,
         0.2,
+        None,
     );
 
     // Should have more than just the initial 2 vertices
@@ -337,6 +342,7 @@ fn test_interpolate_boundary_clamping() {
         neighborhood,
         fitting_buffer,
         0.2,
+        None,
     );
 
     // Far outside right (should be clamped to upper bound value)
@@ -386,6 +392,7 @@ fn test_fitter_fallback() {
         neighborhood,
         fitting_buffer,
         0.2,
+        None,
     );
 
     // Should use mean (2.0)

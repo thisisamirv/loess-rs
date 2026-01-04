@@ -29,6 +29,10 @@ use core::option::Option;
 use num_traits::Float;
 
 // Internal dependencies
+use crate::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
+use crate::engine::executor::VertexPassFn;
+use crate::math::distance::DistanceMetric;
+use crate::math::kernel::WeightFunction;
 use crate::math::neighborhood::{KDTree, Neighborhood, NodeDistance, PointDistance};
 use crate::primitives::buffer::{CachedNeighborhood, FittingBuffer, NeighborhoodSearchBuffer};
 
@@ -105,6 +109,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         neighborhood: &mut Neighborhood<T>,
         fitting_buffer: &mut FittingBuffer<T>,
         cell_fraction: T,
+        custom_vertex_pass: Option<VertexPassFn<T>>,
     ) -> Self
     where
         D: PointDistance<T>,
@@ -201,47 +206,71 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         let mut vertex_data = vec![T::zero(); vertices.len() * stride];
         let mut vertex_neighborhoods = Vec::with_capacity(vertices.len() / dimensions);
 
-        for v_idx in 0..vertices.len() / dimensions {
-            let v_start = v_idx * dimensions;
-            let vertex = &vertices[v_start..v_start + dimensions];
-
-            // Find neighbors for this vertex using workspace buffers
-            kdtree.find_k_nearest(
-                vertex,
+        if let Some(callback) = custom_vertex_pass {
+            // Use custom parallel/accelerated implementation for all vertex fits at once
+            // This passed x/y are augmented ones (ax/ay)
+            callback(
+                x,
+                y,
+                dimensions,
+                &vertices,
                 window_size,
-                dist_calc,
-                None,
-                search_buffer,
-                neighborhood,
+                false,              // use_robustness (initial build)
+                &vec![T::one(); n], // robustness_weights (initial build, all ones)
+                &mut vertex_data,
+                None, // No existing neighborhoods
+                &mut vertex_neighborhoods,
+                WeightFunction::default(), // placeholder, implementation should use its own or passed ones
+                ZeroWeightFallback::default(),
+                PolynomialDegree::default(),
+                &DistanceMetric::default(),
+                &vec![T::one(); dimensions], // placeholder scales
             );
+        } else {
+            for v_idx in 0..vertices.len() / dimensions {
+                let v_start = v_idx * dimensions;
+                let vertex = &vertices[v_start..v_start + dimensions];
 
-            // Cache the neighborhood for future refits
-            vertex_neighborhoods.push(CachedNeighborhood {
-                indices: neighborhood.indices.clone(),
-                distances: neighborhood.distances.clone(),
-                max_distance: neighborhood.max_distance,
-            });
+                // Find neighbors for this vertex using workspace buffers
+                kdtree.find_k_nearest(
+                    vertex,
+                    window_size,
+                    dist_calc,
+                    None,
+                    search_buffer,
+                    neighborhood,
+                );
 
-            let base_idx = v_idx * stride;
+                // Cache the neighborhood for future refits
+                vertex_neighborhoods.push(CachedNeighborhood {
+                    indices: neighborhood.indices.clone(),
+                    distances: neighborhood.distances.clone(),
+                    max_distance: neighborhood.max_distance,
+                });
 
-            if neighborhood.is_empty() {
-                // Fallback: use mean of all y values, zero derivatives
-                let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                vertex_data[base_idx] = mean;
-                // Derivatives remain zero
-                continue;
-            }
+                let base_idx = v_idx * stride;
 
-            // Fit local regression at this vertex using injected fitter
-            // Returns [value, d/dx1, d/dx2, ..., d/dxd]
-            if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
-                for (i, &c) in coeffs.iter().take(stride).enumerate() {
-                    vertex_data[base_idx + i] = c;
+                if neighborhood.is_empty() {
+                    // Fallback: use mean of all y values, zero derivatives
+                    let mean =
+                        y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
+                    vertex_data[base_idx] = mean;
+                    // Derivatives remain zero
+                    continue;
                 }
-            } else {
-                // Fallback to mean, zero derivatives
-                let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                vertex_data[base_idx] = mean;
+
+                // Fit local regression at this vertex using injected fitter
+                // Returns [value, d/dx1, d/dx2, ..., d/dxd]
+                if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
+                    for (i, &c) in coeffs.iter().take(stride).enumerate() {
+                        vertex_data[base_idx + i] = c;
+                    }
+                } else {
+                    // Fallback to mean, zero derivatives
+                    let mean =
+                        y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
+                    vertex_data[base_idx] = mean;
+                }
             }
         }
 
@@ -262,50 +291,83 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     #[allow(clippy::too_many_arguments)]
     pub fn refit_values<F>(
         &mut self,
+        x: &[T],
         y: &[T],
         mut fitter: F,
         neighborhood: &mut Neighborhood<T>,
         fitting_buffer: &mut FittingBuffer<T>,
+        custom_vertex_pass: Option<VertexPassFn<T>>,
+        weight_function: WeightFunction,
+        zero_weight_fallback: ZeroWeightFallback,
+        polynomial_degree: PolynomialDegree,
+        distance_metric: &DistanceMetric<T>,
+        scales: &[T],
+        robustness_weights: &[T],
     ) where
         F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>) -> Option<Vec<T>>,
     {
         let n = y.len() / self.dimensions;
         let stride = self.dimensions + 1; // d+1 values per vertex
 
-        for (v_idx, cached) in self.vertex_neighborhoods.iter().enumerate() {
-            let v_start = v_idx * self.dimensions;
-            let vertex = &self.vertices[v_start..v_start + self.dimensions];
+        if let Some(callback) = custom_vertex_pass {
+            // Need a dummy/placeholder for search_buffer and kdtree isn't needed here
+            // because we use cached neighborhoods.
+            let mut dummy_neighborhoods = Vec::new();
+            callback(
+                x,
+                y,
+                self.dimensions,
+                &self.vertices,
+                0,    // window_size unnecessary
+                true, // use_robustness
+                robustness_weights,
+                &mut self.vertex_data,
+                Some(&self.vertex_neighborhoods),
+                &mut dummy_neighborhoods,
+                weight_function,
+                zero_weight_fallback,
+                polynomial_degree,
+                distance_metric,
+                scales,
+            );
+        } else {
+            for (v_idx, cached) in self.vertex_neighborhoods.iter().enumerate() {
+                let v_start = v_idx * self.dimensions;
+                let vertex = &self.vertices[v_start..v_start + self.dimensions];
 
-            // Use cached neighborhood instead of KD-tree search
-            neighborhood.indices.clear();
-            neighborhood.indices.extend_from_slice(&cached.indices);
-            neighborhood.distances.clear();
-            neighborhood.distances.extend_from_slice(&cached.distances);
-            neighborhood.max_distance = cached.max_distance;
+                // Use cached neighborhood instead of KD-tree search
+                neighborhood.indices.clear();
+                neighborhood.indices.extend_from_slice(&cached.indices);
+                neighborhood.distances.clear();
+                neighborhood.distances.extend_from_slice(&cached.distances);
+                neighborhood.max_distance = cached.max_distance;
 
-            let base_idx = v_idx * stride;
+                let base_idx = v_idx * stride;
 
-            if neighborhood.is_empty() {
-                // Fallback: use mean of all y values, zero derivatives
-                let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                self.vertex_data[base_idx] = mean;
-                for i in 1..stride {
-                    self.vertex_data[base_idx + i] = T::zero();
+                if neighborhood.is_empty() {
+                    // Fallback: use mean of all y values, zero derivatives
+                    let mean =
+                        y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
+                    self.vertex_data[base_idx] = mean;
+                    for i in 1..stride {
+                        self.vertex_data[base_idx + i] = T::zero();
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            // Fit local regression at this vertex using injected fitter
-            if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
-                for (i, &c) in coeffs.iter().take(stride).enumerate() {
-                    self.vertex_data[base_idx + i] = c;
-                }
-            } else {
-                // Fallback to mean, zero derivatives
-                let mean = y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
-                self.vertex_data[base_idx] = mean;
-                for i in 1..stride {
-                    self.vertex_data[base_idx + i] = T::zero();
+                // Fit local regression at this vertex using injected fitter
+                if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
+                    for (i, &c) in coeffs.iter().take(stride).enumerate() {
+                        self.vertex_data[base_idx + i] = c;
+                    }
+                } else {
+                    // Fallback to mean, zero derivatives
+                    let mean =
+                        y.iter().copied().fold(T::zero(), |a, b| a + b) / T::from(n).unwrap();
+                    self.vertex_data[base_idx] = mean;
+                    for i in 1..stride {
+                        self.vertex_data[base_idx + i] = T::zero();
+                    }
                 }
             }
         }

@@ -83,14 +83,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-loess-rs = "0.1"
+loess-rs = "0.2"
 ```
 
 For `no_std` environments:
 
 ```toml
 [dependencies]
-loess-rs = { version = "0.1", default-features = false }
+loess-rs = { version = "0.2", default-features = false }
 ```
 
 ## Quick Start

@@ -1,13 +1,13 @@
 [package]
 name = "loess-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85.0"
 
 # Metadata
 description = "LOESS (Locally Estimated Scatterplot Smoothing) implementation in Rust"
 authors = ["Amir Valizadeh <thisisamirv@gmail.com>"]
-license = "AGPL-3.0-or-later"
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 # Links

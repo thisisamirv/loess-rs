@@ -154,14 +154,18 @@ pub enum SurfaceMode {
 /// Signature for custom smooth pass function
 #[doc(hidden)]
 pub type SmoothPassFn<T> = fn(
-    &[T],               // x
+    &[T],               // x (flattened, row-major for multi-dimensional)
     &[T],               // y
+    usize,              // dimensions
     usize,              // window_size
     bool,               // use_robustness
     &[T],               // robustness_weights
     &mut [T],           // output (y_smooth)
     WeightFunction,     // weight_function
-    ZeroWeightFallback, // zero_weight_flag
+    ZeroWeightFallback, // zero_weight_fallback
+    PolynomialDegree,   // polynomial_degree
+    &DistanceMetric<T>, // distance_metric
+    &[T],               // scales (normalization scales per dimension)
 );
 
 /// Signature for custom cross-validation pass function
@@ -177,13 +181,17 @@ pub type CVPassFn<T> = fn(
 /// Signature for custom interval estimation pass function
 #[doc(hidden)]
 pub type IntervalPassFn<T> = fn(
-    &[T],               // x
+    &[T],               // x (flattened, row-major for multi-dimensional)
     &[T],               // y
     &[T],               // y_smooth
+    usize,              // dimensions
     usize,              // window_size
     &[T],               // robustness_weights
     WeightFunction,     // weight_function
     &IntervalMethod<T>, // interval configuration
+    PolynomialDegree,   // polynomial_degree
+    &DistanceMetric<T>, // distance_metric
+    &[T],               // scales (normalization scales per dimension)
 ) -> Vec<T>; // standard errors
 
 /// Signature for custom iteration batch pass function (GPU acceleration).
@@ -198,6 +206,30 @@ pub type FitPassFn<T> = fn(
     usize,          // iterations
     Vec<T>,         // robustness_weights
 );
+
+/// Signature for custom vertex pass function (Interpolation mode).
+#[doc(hidden)]
+pub type VertexPassFn<T> = fn(
+    &[T],                             // x (augmented)
+    &[T],                             // y (augmented)
+    usize,                            // dimensions
+    &[T],                             // vertices
+    usize,                            // window_size
+    bool,                             // use_robustness
+    &[T],                             // robustness_weights
+    &mut [T],                         // vertex_data (output: value + derivatives)
+    Option<&[CachedNeighborhood<T>]>, // existing neighborhoods (if refitting)
+    &mut Vec<CachedNeighborhood<T>>,  // output neighborhoods (if building)
+    WeightFunction,
+    ZeroWeightFallback,
+    PolynomialDegree,
+    &DistanceMetric<T>,
+    &[T], // scales
+);
+
+/// Signature for custom KD-tree builder function.
+#[doc(hidden)]
+pub type KDTreeBuilderFn<T> = fn(points: &[T], dims: usize) -> KDTree<T>;
 
 /// Output from LOESS execution.
 #[derive(Debug, Clone)]
@@ -307,6 +339,14 @@ pub struct LoessConfig<T: FloatLinalg + SolverLinalg> {
     #[doc(hidden)]
     pub custom_fit_pass: Option<FitPassFn<T>>,
 
+    /// Custom vertex pass function (Interpolation mode).
+    #[doc(hidden)]
+    pub custom_vertex_pass: Option<VertexPassFn<T>>,
+
+    /// Custom KD-tree builder function.
+    #[doc(hidden)]
+    pub custom_kdtree_builder: Option<KDTreeBuilderFn<T>>,
+
     /// Execution backend hint for extension crates.
     #[doc(hidden)]
     pub backend: Option<Backend>,
@@ -343,6 +383,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Defau
             custom_cv_pass: None,
             custom_interval_pass: None,
             custom_fit_pass: None,
+            custom_vertex_pass: None,
+            custom_kdtree_builder: None,
             parallel: false,
             backend: None,
         }
@@ -410,6 +452,14 @@ pub struct LoessExecutor<T: FloatLinalg + SolverLinalg> {
     #[doc(hidden)]
     pub custom_fit_pass: Option<FitPassFn<T>>,
 
+    /// Custom vertex pass function (Interpolation mode).
+    #[doc(hidden)]
+    pub custom_vertex_pass: Option<VertexPassFn<T>>,
+
+    /// Custom KD-tree builder function.
+    #[doc(hidden)]
+    pub custom_kdtree_builder: Option<KDTreeBuilderFn<T>>,
+
     /// Execution backend hint for extension crates.
     #[doc(hidden)]
     pub backend: Option<Backend>,
@@ -454,6 +504,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             custom_cv_pass: None,
             custom_interval_pass: None,
             custom_fit_pass: None,
+            custom_vertex_pass: None,
+            custom_kdtree_builder: None,
             parallel: false,
             backend: None,
         }
@@ -483,6 +535,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             .custom_cv_pass(config.custom_cv_pass)
             .custom_interval_pass(config.custom_interval_pass)
             .custom_fit_pass(config.custom_fit_pass)
+            .custom_vertex_pass(config.custom_vertex_pass)
+            .custom_kdtree_builder(config.custom_kdtree_builder)
             .parallel(config.parallel)
             .backend(config.backend)
     }
@@ -590,6 +644,27 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         self
     }
 
+    /// Set a custom vertex pass function (Interpolation mode).
+    #[doc(hidden)]
+    pub fn custom_vertex_pass(mut self, vertex_pass_fn: Option<VertexPassFn<T>>) -> Self {
+        self.custom_vertex_pass = vertex_pass_fn;
+        self
+    }
+
+    /// Set a custom iteration batch pass function for GPU acceleration.
+    #[doc(hidden)]
+    pub fn custom_fit_pass(mut self, fit_pass_fn: Option<FitPassFn<T>>) -> Self {
+        self.custom_fit_pass = fit_pass_fn;
+        self
+    }
+
+    /// Set a custom KD-tree builder function.
+    #[doc(hidden)]
+    pub fn custom_kdtree_builder(mut self, kdtree_builder_fn: Option<KDTreeBuilderFn<T>>) -> Self {
+        self.custom_kdtree_builder = kdtree_builder_fn;
+        self
+    }
+
     /// Set whether to use parallel execution.
     #[doc(hidden)]
     pub fn parallel(mut self, parallel: bool) -> Self {
@@ -601,13 +676,6 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
     #[doc(hidden)]
     pub fn backend(mut self, backend: Option<Backend>) -> Self {
         self.backend = backend;
-        self
-    }
-
-    /// Set a custom iteration batch pass function (e.g., for GPU acceleration).
-    #[doc(hidden)]
-    pub fn custom_fit_pass(mut self, fit_pass_fn: Option<FitPassFn<T>>) -> Self {
-        self.custom_fit_pass = fit_pass_fn;
         self
     }
 
@@ -669,7 +737,11 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                                 }
                             }
                         }
-                        let kdtree = KDTree::new(train_x, dims);
+                        let kdtree = if let Some(builder) = executor.custom_kdtree_builder {
+                            builder(train_x, dims)
+                        } else {
+                            KDTree::new(train_x, dims)
+                        };
 
                         executor.predict(
                             train_x,
@@ -819,8 +891,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         // Copy scales locally for distance calculator to avoid borrowing workspace
         let scales_local = workspace.executor_buffer.scales.clone();
 
-        // Build KD-Tree for efficient kNN at vertices
-        let kdtree = KDTree::new(&ax, dims);
+        // Build KD-Tree for efficient kNN
+        let kdtree = if let Some(builder) = self.custom_kdtree_builder {
+            builder(&ax, dims)
+        } else {
+            KDTree::new(&ax, dims)
+        };
 
         // Define distance calculator
         let dist_calc = LoessDistanceCalculator {
@@ -881,6 +957,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 &mut workspace.neighborhood,
                 &mut workspace.fitting_buffer,
                 cell_fraction,
+                self.custom_vertex_pass,
             );
             _surface_opt = Some(surface);
 
@@ -895,26 +972,48 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         } else {
             // Direct mode: initial fit - populate neighborhood cache
             workspace.executor_buffer.neighborhood_cache.entries.clear();
-            self.smooth_pass(
-                &ax,
-                &ay,
-                x, // x_query
-                y, // y_query
-                window_size,
-                &workspace.executor_buffer.robustness_weights,
-                false,
-                &scales_local,
-                &mut y_smooth,
-                n,
-                &kdtree,
-                &mut workspace.search_buffer,
-                &mut workspace.neighborhood,
-                &mut workspace.fitting_buffer,
-                None, // No leverage collection during initial fit
-                Some(&mut workspace.executor_buffer.neighborhood_cache.entries), // Populate cache
-                None, // Not using cache yet
-            );
-            workspace.executor_buffer.neighborhood_cache.is_valid = true;
+
+            // Check for custom smooth pass callback
+            if let Some(callback) = self.custom_smooth_pass {
+                // Use custom parallel/accelerated implementation
+                callback(
+                    x,
+                    y,
+                    dims,
+                    window_size,
+                    false, // use_robustness (first pass)
+                    &workspace.executor_buffer.robustness_weights,
+                    &mut y_smooth,
+                    self.weight_function,
+                    self.zero_weight_fallback,
+                    self.polynomial_degree,
+                    &self.distance_metric,
+                    &scales_local,
+                );
+                // Mark cache as invalid since we bypassed the internal method
+                workspace.executor_buffer.neighborhood_cache.is_valid = false;
+            } else {
+                self.smooth_pass(
+                    &ax,
+                    &ay,
+                    x, // x_query
+                    y, // y_query
+                    window_size,
+                    &workspace.executor_buffer.robustness_weights,
+                    false,
+                    &scales_local,
+                    &mut y_smooth,
+                    n,
+                    &kdtree,
+                    &mut workspace.search_buffer,
+                    &mut workspace.neighborhood,
+                    &mut workspace.fitting_buffer,
+                    None, // No leverage collection during initial fit
+                    Some(&mut workspace.executor_buffer.neighborhood_cache.entries), // Populate cache
+                    None, // Not using cache yet
+                );
+                workspace.executor_buffer.neighborhood_cache.is_valid = true;
+            }
         }
 
         let mut iterations_performed = 1;
@@ -1008,10 +1107,18 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                             };
 
                         surface.refit_values(
+                            &ax,
                             &ay,
                             fitter,
                             &mut workspace.neighborhood,
                             &mut workspace.fitting_buffer,
+                            self.custom_vertex_pass,
+                            self.weight_function,
+                            self.zero_weight_fallback,
+                            self.polynomial_degree,
+                            &self.distance_metric,
+                            &scales_local,
+                            &workspace.executor_buffer.robustness_weights,
                         );
 
                         // Re-evaluate at data points
@@ -1023,37 +1130,56 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     }
                 }
                 SurfaceMode::Direct => {
-                    // Use cached neighborhoods to skip KD-tree searches
-                    let cache_ref = if workspace.executor_buffer.neighborhood_cache.is_valid {
-                        Some(
-                            workspace
-                                .executor_buffer
-                                .neighborhood_cache
-                                .entries
-                                .as_slice(),
-                        )
+                    // Check for custom smooth pass callback
+                    if let Some(callback) = self.custom_smooth_pass {
+                        // Use custom parallel/accelerated implementation
+                        callback(
+                            x,
+                            y,
+                            dims,
+                            window_size,
+                            true, // use_robustness
+                            &workspace.executor_buffer.robustness_weights,
+                            &mut y_smooth,
+                            self.weight_function,
+                            self.zero_weight_fallback,
+                            self.polynomial_degree,
+                            &self.distance_metric,
+                            &scales_local,
+                        );
                     } else {
-                        None
-                    };
-                    self.smooth_pass(
-                        &ax,
-                        &ay,
-                        x, // x_query
-                        y, // y_query
-                        window_size,
-                        &workspace.executor_buffer.robustness_weights,
-                        true,
-                        &scales_local,
-                        &mut y_smooth,
-                        n,
-                        &kdtree,
-                        &mut workspace.search_buffer,
-                        &mut workspace.neighborhood,
-                        &mut workspace.fitting_buffer,
-                        None,      // No leverage collection during robustness iterations
-                        None,      // Not populating cache
-                        cache_ref, // Use cached neighborhoods
-                    );
+                        // Use cached neighborhoods to skip KD-tree searches
+                        let cache_ref = if workspace.executor_buffer.neighborhood_cache.is_valid {
+                            Some(
+                                workspace
+                                    .executor_buffer
+                                    .neighborhood_cache
+                                    .entries
+                                    .as_slice(),
+                            )
+                        } else {
+                            None
+                        };
+                        self.smooth_pass(
+                            &ax,
+                            &ay,
+                            x, // x_query
+                            y, // y_query
+                            window_size,
+                            &workspace.executor_buffer.robustness_weights,
+                            true,
+                            &scales_local,
+                            &mut y_smooth,
+                            n,
+                            &kdtree,
+                            &mut workspace.search_buffer,
+                            &mut workspace.neighborhood,
+                            &mut workspace.fitting_buffer,
+                            None,      // No leverage collection during robustness iterations
+                            None,      // Not populating cache
+                            cache_ref, // Use cached neighborhoods
+                        );
+                    }
                 }
             }
         }
@@ -1100,8 +1226,24 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             };
 
         // Standard errors (now using actual leverage if available)
-        let se = if confidence_method.is_some() {
-            if let Some(ref lev) = leverage_values {
+        let se = if let Some(interval_method) = confidence_method {
+            // Check for custom interval pass callback
+            if let Some(callback) = self.custom_interval_pass {
+                // Use custom parallel/accelerated implementation
+                Some(callback(
+                    x,
+                    y,
+                    &y_smooth,
+                    dims,
+                    window_size,
+                    &workspace.executor_buffer.robustness_weights,
+                    self.weight_function,
+                    interval_method,
+                    self.polynomial_degree,
+                    &self.distance_metric,
+                    &scales_local,
+                ))
+            } else if let Some(ref lev) = leverage_values {
                 // Use actual leverage values
                 T::batch_abs_residuals(
                     &y[..n],

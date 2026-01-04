@@ -47,8 +47,10 @@ use core::fmt::Debug;
 // Internal dependencies
 use crate::algorithms::regression::{PolynomialDegree, SolverLinalg, ZeroWeightFallback};
 use crate::algorithms::robustness::RobustnessMethod;
-use crate::engine::executor::{CVPassFn, FitPassFn, IntervalPassFn, SmoothPassFn, SurfaceMode};
-use crate::engine::executor::{LoessConfig, LoessExecutor};
+use crate::engine::executor::{
+    CVPassFn, FitPassFn, IntervalPassFn, KDTreeBuilderFn, LoessConfig, LoessExecutor, SmoothPassFn,
+    SurfaceMode, VertexPassFn,
+};
 use crate::engine::validator::Validator;
 use crate::math::boundary::BoundaryPolicy;
 use crate::math::distance::{DistanceLinalg, DistanceMetric};
@@ -136,6 +138,10 @@ pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Evaluation mode (default: Interpolation)
     pub surface_mode: SurfaceMode,
 
+    /// Tracks if any parameter was set multiple times (for validation)
+    #[doc(hidden)]
+    pub(crate) duplicate_param: Option<&'static str>,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -155,6 +161,14 @@ pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     #[doc(hidden)]
     pub custom_fit_pass: Option<FitPassFn<T>>,
 
+    /// Custom vertex pass function.
+    #[doc(hidden)]
+    pub custom_vertex_pass: Option<VertexPassFn<T>>,
+
+    /// Custom KD-tree builder function.
+    #[doc(hidden)]
+    pub custom_kdtree_builder: Option<KDTreeBuilderFn<T>>,
+
     /// Execution backend hint.
     #[doc(hidden)]
     pub backend: Option<Backend>,
@@ -162,10 +176,6 @@ pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Parallel execution hint.
     #[doc(hidden)]
     pub parallel: Option<bool>,
-
-    /// Tracks if any parameter was set multiple times (for validation)
-    #[doc(hidden)]
-    pub(crate) duplicate_param: Option<&'static str>,
 }
 
 impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Default
@@ -200,13 +210,18 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Onlin
             cell: None,
             interpolation_vertices: None,
             surface_mode: SurfaceMode::default(),
+            duplicate_param: None,
+            // ++++++++++++++++++++++++++++++++++++++
+            // +               DEV                  +
+            // ++++++++++++++++++++++++++++++++++++++
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
             custom_fit_pass: None,
+            custom_vertex_pass: None,
+            custom_kdtree_builder: None,
             backend: None,
             parallel: None,
-            duplicate_param: None,
         }
     }
 
@@ -346,7 +361,14 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Onlin
         self
     }
 
-    /// Set parallel execution hint.
+    /// Set a custom KD-tree builder function.
+    #[doc(hidden)]
+    pub fn custom_kdtree_builder(mut self, kdtree_builder_fn: Option<KDTreeBuilderFn<T>>) -> Self {
+        self.custom_kdtree_builder = kdtree_builder_fn;
+        self
+    }
+
+    /// Set whether to use parallel execution.
     #[doc(hidden)]
     pub fn parallel(mut self, parallel: bool) -> Self {
         self.parallel = Some(parallel);
@@ -536,10 +558,15 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     surface_mode: self.config.surface_mode,
                     interpolation_vertices: self.config.interpolation_vertices,
                     cell: self.config.cell,
+                    // ++++++++++++++++++++++++++++++++++++++
+                    // +               DEV                  +
+                    // ++++++++++++++++++++++++++++++++++++++
                     custom_smooth_pass: self.config.custom_smooth_pass,
                     custom_cv_pass: self.config.custom_cv_pass,
                     custom_interval_pass: self.config.custom_interval_pass,
                     custom_fit_pass: self.config.custom_fit_pass,
+                    custom_vertex_pass: self.config.custom_vertex_pass,
+                    custom_kdtree_builder: self.config.custom_kdtree_builder,
                     parallel: self.config.parallel.unwrap_or(false),
                     backend: self.config.backend,
                 };
@@ -597,6 +624,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     custom_cv_pass: self.config.custom_cv_pass,
                     custom_interval_pass: self.config.custom_interval_pass,
                     custom_fit_pass: self.config.custom_fit_pass,
+                    custom_vertex_pass: self.config.custom_vertex_pass,
+                    custom_kdtree_builder: self.config.custom_kdtree_builder,
                     parallel: self.config.parallel.unwrap_or(false),
                     backend: self.config.backend,
                 };
