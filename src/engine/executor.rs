@@ -958,6 +958,11 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 &mut workspace.fitting_buffer,
                 cell_fraction,
                 self.custom_vertex_pass,
+                &scales_local,
+                self.weight_function,
+                self.zero_weight_fallback,
+                self.polynomial_degree,
+                &self.distance_metric,
             );
             _surface_opt = Some(surface);
 

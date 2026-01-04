@@ -110,6 +110,11 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         fitting_buffer: &mut FittingBuffer<T>,
         cell_fraction: T,
         custom_vertex_pass: Option<VertexPassFn<T>>,
+        scales: &[T],
+        weight_function: WeightFunction,
+        zero_weight_fallback: ZeroWeightFallback,
+        polynomial_degree: PolynomialDegree,
+        distance_metric: &DistanceMetric<T>,
     ) -> Self
     where
         D: PointDistance<T>,
@@ -220,11 +225,11 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 &mut vertex_data,
                 None, // No existing neighborhoods
                 &mut vertex_neighborhoods,
-                WeightFunction::default(), // placeholder, implementation should use its own or passed ones
-                ZeroWeightFallback::default(),
-                PolynomialDegree::default(),
-                &DistanceMetric::default(),
-                &vec![T::one(); dimensions], // placeholder scales
+                weight_function,
+                zero_weight_fallback,
+                polynomial_degree,
+                distance_metric,
+                scales,
             );
         } else {
             for v_idx in 0..vertices.len() / dimensions {

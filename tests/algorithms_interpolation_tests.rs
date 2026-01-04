@@ -13,8 +13,10 @@
 use approx::assert_relative_eq;
 
 use loess_rs::internals::algorithms::interpolation::InterpolationSurface;
+use loess_rs::internals::algorithms::regression::{PolynomialDegree, ZeroWeightFallback};
 use loess_rs::internals::engine::executor::LoessDistanceCalculator;
 use loess_rs::internals::math::distance::DistanceMetric;
+use loess_rs::internals::math::kernel::WeightFunction;
 use loess_rs::internals::math::neighborhood::{KDTree, Neighborhood, NodeDistance};
 use loess_rs::internals::primitives::buffer::{FittingBuffer, LoessBuffer};
 
@@ -76,6 +78,11 @@ fn test_build_simple_1d() {
         fitting_buffer,
         0.2,
         None,
+        &[],
+        WeightFunction::default(),
+        ZeroWeightFallback::default(),
+        PolynomialDegree::default(),
+        &DistanceMetric::default(),
     );
 
     assert!(surface.vertex_data.len() >= 4); // At least 2 vertices * 2 values each
@@ -136,6 +143,11 @@ fn test_build_simple_2d() {
         fitting_buffer,
         0.2,
         None,
+        &[],
+        WeightFunction::default(),
+        ZeroWeightFallback::default(),
+        PolynomialDegree::default(),
+        &DistanceMetric::default(),
     );
 
     // Initial cell has 4 vertices (2^2)
@@ -185,6 +197,11 @@ fn test_interpolate_1d_linear() {
         fitting_buffer,
         0.2,
         None,
+        &[],
+        WeightFunction::default(),
+        ZeroWeightFallback::default(),
+        PolynomialDegree::default(),
+        &DistanceMetric::default(),
     );
 
     // Test points
@@ -235,6 +252,11 @@ fn test_interpolate_2d_bilinear() {
         fitting_buffer,
         0.2,
         None,
+        &[],
+        WeightFunction::default(),
+        ZeroWeightFallback::default(),
+        PolynomialDegree::default(),
+        &DistanceMetric::default(),
     );
 
     // Evaluate at center (1, 1) -> 2(1) + 3(1) + 1 = 6
@@ -292,6 +314,11 @@ fn test_adaptive_subdivision() {
         fitting_buffer,
         0.2,
         None,
+        &[],
+        WeightFunction::default(),
+        ZeroWeightFallback::default(),
+        PolynomialDegree::default(),
+        &DistanceMetric::default(),
     );
 
     // Should have more than just the initial 2 vertices
@@ -343,6 +370,11 @@ fn test_interpolate_boundary_clamping() {
         fitting_buffer,
         0.2,
         None,
+        &[],
+        WeightFunction::default(),
+        ZeroWeightFallback::default(),
+        PolynomialDegree::default(),
+        &DistanceMetric::default(),
     );
 
     // Far outside right (should be clamped to upper bound value)
@@ -393,6 +425,11 @@ fn test_fitter_fallback() {
         fitting_buffer,
         0.2,
         None,
+        &[],
+        WeightFunction::default(),
+        ZeroWeightFallback::default(),
+        PolynomialDegree::default(),
+        &DistanceMetric::default(),
     );
 
     // Should use mean (2.0)
