@@ -158,7 +158,9 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
                 return self.handle_zero_weights_fit();
             }
 
+            buf.xtw_x.clear();
             buf.xtw_x.resize(n_coeffs * n_coeffs, T::zero());
+            buf.xtw_y.clear();
             buf.xtw_y.resize(n_coeffs, T::zero());
 
             self.fit_polynomial_wls_internal(
@@ -565,6 +567,21 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
                 xtw_x[..9].copy_from_slice(&a);
                 xtw_y[..3].copy_from_slice(&b);
             }
+            (1, PolynomialDegree::Cubic) => {
+                let mut a = [T::zero(); 16];
+                let mut b = [T::zero(); 4];
+                T::accumulate_1d_cubic(
+                    self.x,
+                    self.y,
+                    &self.neighborhood.indices,
+                    weights,
+                    query_point[0],
+                    &mut a,
+                    &mut b,
+                );
+                xtw_x[..16].copy_from_slice(&a);
+                xtw_y[..4].copy_from_slice(&b);
+            }
             (2, PolynomialDegree::Linear) => {
                 let mut a = [T::zero(); 9];
                 let mut b = [T::zero(); 3];
@@ -597,6 +614,22 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
                 xtw_x[..36].copy_from_slice(&a);
                 xtw_y[..6].copy_from_slice(&b);
             }
+            (2, PolynomialDegree::Cubic) => {
+                let mut a = [T::zero(); 100];
+                let mut b = [T::zero(); 10];
+                T::accumulate_2d_cubic(
+                    self.x,
+                    self.y,
+                    &self.neighborhood.indices,
+                    weights,
+                    query_point[0],
+                    query_point[1],
+                    &mut a,
+                    &mut b,
+                );
+                xtw_x[..100].copy_from_slice(&a);
+                xtw_y[..10].copy_from_slice(&b);
+            }
             (3, PolynomialDegree::Linear) => {
                 let mut a = [T::zero(); 16];
                 let mut b = [T::zero(); 4];
@@ -613,6 +646,23 @@ impl<'a, T: FloatLinalg + SolverLinalg> RegressionContext<'a, T> {
                 );
                 xtw_x[..16].copy_from_slice(&a);
                 xtw_y[..4].copy_from_slice(&b);
+            }
+            (3, PolynomialDegree::Quadratic) => {
+                let mut a = [T::zero(); 100];
+                let mut b = [T::zero(); 10];
+                T::accumulate_3d_quadratic(
+                    self.x,
+                    self.y,
+                    &self.neighborhood.indices,
+                    weights,
+                    query_point[0],
+                    query_point[1],
+                    query_point[2],
+                    &mut a,
+                    &mut b,
+                );
+                xtw_x[..100].copy_from_slice(&a);
+                xtw_y[..10].copy_from_slice(&b);
             }
             _ => {
                 let term_gen =

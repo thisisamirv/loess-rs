@@ -118,7 +118,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
     ) -> Self
     where
         D: PointDistance<T>,
-        F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>) -> Option<Vec<T>>,
+        F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>, PolynomialDegree) -> Option<Vec<T>>,
     {
         let n = x.len() / dimensions;
 
@@ -137,6 +137,10 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 }
             }
         }
+
+        // Store tight bounds before expansion (for Boundary Linear Fallback)
+        let tight_lower = lower.clone();
+        let tight_upper = upper.clone();
 
         // Expand bounding box slightly (0.5%)
         for d in 0..dimensions {
@@ -236,6 +240,20 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 let v_start = v_idx * dimensions;
                 let vertex = &vertices[v_start..v_start + dimensions];
 
+                // Boundary Linear Fallback:
+                // If a vertex lies outside the tight data bounds, we fall back to a Linear model
+                // for that vertex to avoid unstable extrapolation.
+                let is_outside = (0..dimensions).any(|d| {
+                    vertex[d] < tight_lower[d] - T::epsilon()
+                        || vertex[d] > tight_upper[d] + T::epsilon()
+                });
+
+                let effective_degree = if is_outside && polynomial_degree.value() > 1 {
+                    PolynomialDegree::Linear
+                } else {
+                    polynomial_degree
+                };
+
                 // Find neighbors for this vertex using workspace buffers
                 kdtree.find_k_nearest(
                     vertex,
@@ -266,7 +284,8 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
 
                 // Fit local regression at this vertex using injected fitter
                 // Returns [value, d/dx1, d/dx2, ..., d/dxd]
-                if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
+                if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer, effective_degree)
+                {
                     for (i, &c) in coeffs.iter().take(stride).enumerate() {
                         vertex_data[base_idx + i] = c;
                     }
@@ -309,10 +328,25 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         scales: &[T],
         robustness_weights: &[T],
     ) where
-        F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>) -> Option<Vec<T>>,
+        F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>, PolynomialDegree) -> Option<Vec<T>>,
     {
         let n = y.len() / self.dimensions;
         let stride = self.dimensions + 1; // d+1 values per vertex
+
+        // Compute tight bounds for Boundary Linear Fallback
+        let mut tight_lower = vec![T::infinity(); self.dimensions];
+        let mut tight_upper = vec![T::neg_infinity(); self.dimensions];
+        for i in 0..n {
+            for d in 0..self.dimensions {
+                let val = x[i * self.dimensions + d];
+                if val < tight_lower[d] {
+                    tight_lower[d] = val;
+                }
+                if val > tight_upper[d] {
+                    tight_upper[d] = val;
+                }
+            }
+        }
 
         if let Some(callback) = custom_vertex_pass {
             // Need a dummy/placeholder for search_buffer and kdtree isn't needed here
@@ -340,6 +374,18 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 let v_start = v_idx * self.dimensions;
                 let vertex = &self.vertices[v_start..v_start + self.dimensions];
 
+                // Boundary Linear Fallback
+                let is_outside = (0..self.dimensions).any(|d| {
+                    vertex[d] < tight_lower[d] - T::epsilon()
+                        || vertex[d] > tight_upper[d] + T::epsilon()
+                });
+
+                let effective_degree = if is_outside && polynomial_degree.value() > 1 {
+                    PolynomialDegree::Linear
+                } else {
+                    polynomial_degree
+                };
+
                 // Use cached neighborhood instead of KD-tree search
                 neighborhood.indices.clear();
                 neighborhood.indices.extend_from_slice(&cached.indices);
@@ -361,7 +407,8 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 }
 
                 // Fit local regression at this vertex using injected fitter
-                if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer) {
+                if let Some(coeffs) = fitter(vertex, neighborhood, fitting_buffer, effective_degree)
+                {
                     for (i, &c) in coeffs.iter().take(stride).enumerate() {
                         self.vertex_data[base_idx + i] = c;
                     }

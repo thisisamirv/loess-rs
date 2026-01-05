@@ -60,7 +60,8 @@ fn test_build_simple_1d() {
     // Simple fitter that just returns the x-coordinate (identity)
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
-                  _: &mut FittingBuffer<f64>|
+                  _: &mut FittingBuffer<f64>,
+                  _: PolynomialDegree|
      -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
@@ -125,7 +126,8 @@ fn test_build_simple_2d() {
 
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
-                  _: &mut FittingBuffer<f64>|
+                  _: &mut FittingBuffer<f64>,
+                  _: PolynomialDegree|
      -> Option<Vec<f64>> { Some(vec![vertex[0] + vertex[1], 1.0, 1.0]) };
 
     let surface = InterpolationSurface::build(
@@ -179,7 +181,8 @@ fn test_interpolate_1d_linear() {
 
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
-                  _: &mut FittingBuffer<f64>|
+                  _: &mut FittingBuffer<f64>,
+                  _: PolynomialDegree|
      -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
@@ -232,10 +235,13 @@ fn test_interpolate_2d_bilinear() {
         ..
     } = workspace;
 
-    let fitter =
-        |vertex: &[f64], _: &Neighborhood<f64>, _: &mut FittingBuffer<f64>| -> Option<Vec<f64>> {
-            Some(vec![2.0 * vertex[0] + 3.0 * vertex[1] + 1.0, 2.0, 3.0])
-        };
+    let fitter = |vertex: &[f64],
+                  _: &Neighborhood<f64>,
+                  _: &mut FittingBuffer<f64>,
+                  _: PolynomialDegree|
+     -> Option<Vec<f64>> {
+        Some(vec![2.0 * vertex[0] + 3.0 * vertex[1] + 1.0, 2.0, 3.0])
+    };
 
     let surface = InterpolationSurface::build(
         &x,
@@ -296,7 +302,8 @@ fn test_adaptive_subdivision() {
     // Fitter returns x^2
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
-                  _: &mut FittingBuffer<f64>|
+                  _: &mut FittingBuffer<f64>,
+                  _: PolynomialDegree|
      -> Option<Vec<f64>> { Some(vec![vertex[0] * vertex[0], 2.0 * vertex[0]]) };
 
     let surface = InterpolationSurface::build(
@@ -352,7 +359,8 @@ fn test_interpolate_boundary_clamping() {
 
     let fitter = |vertex: &[f64],
                   _: &Neighborhood<f64>,
-                  _: &mut FittingBuffer<f64>|
+                  _: &mut FittingBuffer<f64>,
+                  _: PolynomialDegree|
      -> Option<Vec<f64>> { Some(vec![vertex[0], 1.0]) };
 
     let surface = InterpolationSurface::build(
@@ -407,8 +415,11 @@ fn test_fitter_fallback() {
     } = workspace;
 
     // Broken fitter always returns None
-    let fitter =
-        |_: &[f64], _: &Neighborhood<f64>, _: &mut FittingBuffer<f64>| -> Option<Vec<f64>> { None };
+    let fitter = |_: &[f64],
+                  _: &Neighborhood<f64>,
+                  _: &mut FittingBuffer<f64>,
+                  _: PolynomialDegree|
+     -> Option<Vec<f64>> { None };
 
     let surface = InterpolationSurface::build(
         &x,

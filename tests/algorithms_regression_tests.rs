@@ -1091,3 +1091,59 @@ fn test_nd_cross_validation() {
     // We don't strictly assert WHICH one because it depends on the noise and splitting,
     // but we assert the code ran through the nD CV path without panicking.
 }
+// ============================================================================
+// New Edge Case Tests (Value Extremes & Stability)
+// ============================================================================
+
+/// Test WLS with flat response (zero variance).
+#[test]
+fn test_wls_flat_response() {
+    let x = vec![1.0, 2.0, 3.0];
+    let y = vec![5.0, 5.0, 5.0];
+    let weights = vec![1.0, 1.0, 1.0];
+    // Fit should be exactly 5.0
+    let result = local_wls_helper(&x, &y, &weights, 0, 2, 1.5, 2.0);
+    assert_relative_eq!(result, 5.0, epsilon = 1e-12);
+}
+
+/// Test WLS with vertical line (zero variance X).
+#[test]
+fn test_wls_vertical_line_fallback() {
+    let x = vec![2.0, 2.0, 2.0];
+    let y = vec![1.0, 2.0, 3.0];
+    let weights = vec![1.0, 1.0, 1.0];
+
+    // Denominator will be zero due to x being identical.
+    // Should fallback to weighted mean of Y => 2.0
+    let result = local_wls_helper(&x, &y, &weights, 0, 2, 2.0, 1.0);
+    assert_relative_eq!(result, 2.0, epsilon = 1e-12);
+}
+
+/// Test WLS with very small values (underflow check).
+#[test]
+fn test_wls_small_values() {
+    let x = vec![1e-10, 2e-10, 3e-10];
+    let y = vec![1e-10, 2e-10, 3e-10];
+    let weights = vec![1.0, 1.0, 1.0];
+
+    // Should fit y=x perfectly even with small scales
+    // Fit at 2.5e-10
+    let result = local_wls_helper(&x, &y, &weights, 0, 2, 2.5e-10, 1e-9);
+    assert_relative_eq!(result, 2.5e-10, epsilon = 1e-12 * 1e-10); // Relative epsilon
+}
+
+/// Test WLS handling of NaNs (Internal behavior check).
+/// Note: Public API validator prevents NaNs, but internals should be robust.
+#[test]
+fn test_wls_nan_handling() {
+    let x = vec![1.0, 2.0, 3.0];
+    let y = vec![1.0, f64::NAN, 3.0];
+    let weights = vec![1.0, 1.0, 1.0];
+
+    // NaNs in Y will propagate to sums.
+    let result = local_wls_helper(&x, &y, &weights, 0, 2, 2.0, 2.0);
+    assert!(
+        result.is_nan(),
+        "WLS should propagate NaNs if present in data"
+    );
+}

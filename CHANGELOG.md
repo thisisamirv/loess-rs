@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed a potential crash in parallel interpolation refinement by correctly propagating augmented data slices to vertex fitting functions.
 - Fixed inconsistent parameter types in custom pass callbacks.
 - Fixed missing setters for online and streaming adapters.
+- Fixed incorrect standard error propagation in `BatchLoessBuilder`.
+- Added `Boundary Linear Fallback` strategy to `InterpolationSurface` to prevent numerical instability ("explosions") at data boundaries when using high-degree polynomials (Quadratic, Cubic, Quartic).
+- Fixed missing `max_distance` update in the KD-Tree search, which incorrectly calculated the bandwidth for tricube weights.
+- Fixed cumulative cross-contamination in regression buffers, which were not being zeroed between query points.
+- Delegated 2D Cubic and 3D Quadratic from context to specialized accumulators.
+- Fixed horizontal phase shift in `Interpolation` mode when using boundary policies (`Extend`, `Reflect`, `Zero`). The robustness iteration loop was incorrectly using augmented data indices instead of original data for query point evaluation.
 
 ## [0.1.0]
 

@@ -117,12 +117,12 @@ impl<'a, T> CVConfig<'a, T> {
     }
 
     /// Get the CV kind for internal use.
-    pub(crate) fn kind(&self) -> CVKind {
+    pub fn kind(&self) -> CVKind {
         self.kind
     }
 
     /// Get the seed for internal use.
-    pub(crate) fn get_seed(&self) -> Option<u64> {
+    pub fn get_seed(&self) -> Option<u64> {
         self.seed
     }
 }

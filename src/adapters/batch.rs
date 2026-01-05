@@ -355,6 +355,24 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
         self
     }
 
+    /// Set the random seed for reproducible cross-validation.
+    pub fn cv_seed(mut self, seed: u64) -> Self {
+        self.cv_seed = Some(seed);
+        self
+    }
+
+    /// Enable returning standard errors in the result.
+    pub fn return_se(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.interval_type = Some(IntervalMethod::se());
+        } else if let Some(method) = self.interval_type {
+            if method.se && !method.confidence && !method.prediction {
+                self.interval_type = None;
+            }
+        }
+        self
+    }
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++

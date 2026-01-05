@@ -924,25 +924,27 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         // For interpolation mode: build surface once before iterations
         let mut _surface_opt: Option<InterpolationSurface<T>> = None;
         if self.surface_mode == SurfaceMode::Interpolation {
-            let fitter =
-                |vertex: &[T], neighborhood: &Neighborhood<T>, fb: &mut FittingBuffer<T>| {
-                    let mut context = RegressionContext::new(
-                        &ax,
-                        dims,
-                        &ay,
-                        0, // query_idx is not used when query_point is Some
-                        Some(vertex),
-                        neighborhood,
-                        false, // use_robustness
-                        &workspace.executor_buffer.robustness_weights,
-                        self.weight_function,
-                        self.zero_weight_fallback,
-                        self.polynomial_degree,
-                        false, // compute_leverage
-                        Some(fb),
-                    );
-                    context.fit_with_coefficients()
-                };
+            let fitter = |vertex: &[T],
+                          neighborhood: &Neighborhood<T>,
+                          fb: &mut FittingBuffer<T>,
+                          degree: PolynomialDegree| {
+                let mut context = RegressionContext::new(
+                    &ax,
+                    dims,
+                    &ay,
+                    0, // query_idx is not used when query_point is Some
+                    Some(vertex),
+                    neighborhood,
+                    false, // use_robustness
+                    &workspace.executor_buffer.robustness_weights,
+                    self.weight_function,
+                    self.zero_weight_fallback,
+                    degree,
+                    false, // compute_leverage
+                    Some(fb),
+                );
+                context.fit_with_coefficients()
+            };
 
             let cell_fraction =
                 T::from(self.cell.unwrap_or(0.2)).unwrap_or_else(|| T::from(0.2).unwrap());
@@ -1098,7 +1100,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                         let fitter =
                             |vertex: &[T],
                              neighborhood: &Neighborhood<T>,
-                             fb: &mut FittingBuffer<T>| {
+                             fb: &mut FittingBuffer<T>,
+                             degree: PolynomialDegree| {
                                 let mut context = RegressionContext::new(
                                     &ax,
                                     dims,
@@ -1110,7 +1113,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                                     &workspace.executor_buffer.robustness_weights,
                                     self.weight_function,
                                     self.zero_weight_fallback,
-                                    self.polynomial_degree,
+                                    degree,
                                     false, // compute_leverage
                                     Some(fb),
                                 );
@@ -1132,10 +1135,10 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                             &workspace.executor_buffer.robustness_weights,
                         );
 
-                        // Re-evaluate at data points
+                        // Re-evaluate at data points using original x (not augmented)
                         for (i, val) in y_smooth.iter_mut().enumerate().take(n) {
                             let query_offset = i * dims;
-                            let query_point = &ax[query_offset..query_offset + dims];
+                            let query_point = &x[query_offset..query_offset + dims];
                             *val = surface.evaluate(query_point);
                         }
                     }

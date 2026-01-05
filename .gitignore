@@ -20,6 +20,7 @@ Cargo.lock
 *.swo
 *~
 .DS_Store
+tmp/
 
 # Benchmark results
 /target/criterion/
