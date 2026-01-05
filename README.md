@@ -59,7 +59,7 @@ Validation ensures the Rust implementation produces results identical (or accept
 
 ```bash
 cd validation/loess-rs
-cargo run --release
+cargo run --bin validate
 ```
 
 *Output: `validation/output/rust_validate.json`*

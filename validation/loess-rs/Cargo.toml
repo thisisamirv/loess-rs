@@ -8,6 +8,10 @@ publish = false
 name = "validate"
 path = "src/validate.rs"
 
+[[bin]]
+name = "visual"
+path = "src/visual_validation.rs"
+
 [dependencies]
 loess-rs = { git = "https://github.com/thisisamirv/loess-rs", branch = "develop" }
 serde = { version = "1.0", features = ["derive"] }
