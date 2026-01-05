@@ -111,7 +111,7 @@ fn test_config_defaults() {
     );
     assert!(config.cv_kind.is_none(), "Default CV kind should be None");
     assert!(
-        config.auto_convergence.is_none(),
+        config.auto_converge.is_none(),
         "Default auto-convergence should be None"
     );
     assert!(
@@ -135,7 +135,7 @@ fn test_config_custom() {
         scaling_method: ScalingMethod::default(),
         cv_fractions: Some(vec![0.3, 0.5, 0.7]),
         cv_kind: None,
-        auto_convergence: Some(1e-6),
+        auto_converge: Some(1e-6),
         return_variance: None,
         boundary_policy: BoundaryPolicy::default(),
         custom_smooth_pass: None,
@@ -165,7 +165,7 @@ fn test_config_custom() {
     );
     assert_eq!(config.robustness_method, RobustnessMethod::Huber);
     assert_eq!(config.cv_fractions, Some(vec![0.3, 0.5, 0.7]));
-    assert_eq!(config.auto_convergence, Some(1e-6));
+    assert_eq!(config.auto_converge, Some(1e-6));
 }
 
 // ============================================================================
@@ -340,7 +340,7 @@ fn test_config_f32() {
         scaling_method: ScalingMethod::default(),
         cv_fractions: None,
         cv_kind: None,
-        auto_convergence: None,
+        auto_converge: None,
         return_variance: None,
         boundary_policy: BoundaryPolicy::default(),
         custom_smooth_pass: None,
@@ -404,7 +404,7 @@ fn test_executor_convergence_zero_tolerance() {
         scaling_method: ScalingMethod::default(),
         cv_fractions: None,
         cv_kind: None,
-        auto_convergence: Some(0.0), // Zero tolerance
+        auto_converge: Some(0.0), // Zero tolerance
         return_variance: None,
         boundary_policy: BoundaryPolicy::Extend,
         custom_smooth_pass: None,

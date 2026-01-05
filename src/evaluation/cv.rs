@@ -397,8 +397,6 @@ impl CVKind {
 
         let fold_size = n / k;
         let mut cv_scores = vec![T::zero(); fractions.len()];
-
-        // Generate indices and optionally shuffle if seed is provided
         let mut indices: Vec<usize> = (0..n).collect();
         if let Some(s) = seed {
             let mut rng = SimpleRng::new(s);
@@ -463,8 +461,10 @@ impl CVKind {
                     let (sorted_tx, sorted_ty): (Vec<T>, Vec<T>) = train_data.into_iter().unzip();
 
                     let train_smooth = smoother(&sorted_tx, &sorted_ty, frac);
-                    let mut preds = vec![T::zero(); tex.len() / dims];
-                    Self::interpolate_prediction_batch(&sorted_tx, &train_smooth, tex, &mut preds);
+                    let mut preds = Vec::with_capacity(tex.len() / dims);
+                    for &xi in tex.iter() {
+                        preds.push(Self::interpolate_prediction(&sorted_tx, &train_smooth, xi));
+                    }
                     preds
                 };
 

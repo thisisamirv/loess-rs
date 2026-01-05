@@ -14,11 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Reduced figures size significantly.
+- Implement naming consistency for `auto_converge` (removed `auto_convergence`).
 
 ### Fixed
 
 - Fixed `boundary_degree_fallback` pass to online and streaming adapters.
 - Fixed `boundary_degree_fallback` pass to `custom_vertex_pass` and `VertexPassFn`.
+- Fixed KFold CV bug through adding explicit sorting of training subsets and using robust binary-search interpolation for each test point.
+- Fixed `auto_converge` support for Online adapter.
 
 ## [0.2.0]
 

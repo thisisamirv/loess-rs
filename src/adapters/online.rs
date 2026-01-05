@@ -91,7 +91,7 @@ pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     pub iterations: usize,
 
     /// Convergence tolerance for early stopping (None = disabled)
-    pub auto_convergence: Option<T>,
+    pub auto_converge: Option<T>,
 
     /// Kernel weight function
     pub weight_function: WeightFunction,
@@ -205,7 +205,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Onlin
             boundary_policy: BoundaryPolicy::default(),
             compute_residuals: false,
             return_robustness_weights: false,
-            auto_convergence: None,
+            auto_converge: None,
             deferred_error: None,
             polynomial_degree: PolynomialDegree::default(),
             dimensions: 1,
@@ -319,7 +319,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Onlin
 
     /// Enable auto-convergence for robustness iterations.
     pub fn auto_converge(mut self, tolerance: T) -> Self {
-        self.auto_convergence = Some(tolerance);
+        self.auto_converge = Some(tolerance);
         self
     }
 
@@ -455,6 +455,9 @@ pub struct OnlineOutput<T> {
 
     /// Robustness weight for the latest point (if computed)
     pub robustness_weight: Option<T>,
+
+    /// Number of robustness iterations actually performed
+    pub iterations_used: Option<usize>,
 }
 
 // ============================================================================
@@ -541,13 +544,14 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 std_error: None,
                 residual: Some(residual),
                 robustness_weight: Some(T::one()),
+                iterations_used: Some(0),
             }));
         }
 
         // Smooth using LOESS for windows of size >= 3
 
         // Choose update strategy based on configuration
-        let (smoothed, std_err, rob_weight) = match self.config.update_mode {
+        let (smoothed, std_err, rob_weight, iterations) = match self.config.update_mode {
             UpdateMode::Incremental => {
                 // Incremental mode: single-pass fit (no robustness) for maximum performance.
                 let n = x_vec.len() / self.config.dimensions;
@@ -572,13 +576,13 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     iterations: 0, // No robustness for incremental mode (speed)
                     weight_function: self.config.weight_function,
                     robustness_method: self.config.robustness_method,
-                    scaling_method: self.config.scaling_method, // ADDED
+                    scaling_method: self.config.scaling_method,
                     zero_weight_fallback: self.config.zero_weight_fallback,
                     boundary_policy: self.config.boundary_policy,
                     polynomial_degree: self.config.polynomial_degree,
                     dimensions: self.config.dimensions,
                     distance_metric: self.config.distance_metric.clone(),
-                    auto_convergence: None,
+                    auto_converge: None,
                     cv_fractions: None,
                     cv_kind: None,
                     return_variance: None,
@@ -605,7 +609,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     LoessError::InvalidNumericValue("No smoothed output produced".into())
                 })?;
 
-                (smoothed_val, None, Some(T::one()))
+                (smoothed_val, None, Some(T::one()), result.iterations)
             }
             UpdateMode::Full => {
                 // Validate grid resolution
@@ -632,13 +636,13 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     iterations: self.config.iterations,
                     weight_function: self.config.weight_function,
                     robustness_method: self.config.robustness_method,
-                    scaling_method: self.config.scaling_method, // ADDED
+                    scaling_method: self.config.scaling_method,
                     zero_weight_fallback: self.config.zero_weight_fallback,
                     boundary_policy: self.config.boundary_policy,
                     polynomial_degree: self.config.polynomial_degree,
                     dimensions: self.config.dimensions,
                     distance_metric: self.config.distance_metric.clone(),
-                    auto_convergence: self.config.auto_convergence,
+                    auto_converge: self.config.auto_converge,
                     cv_fractions: None,
                     cv_kind: None,
                     return_variance: None,
@@ -674,7 +678,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     None
                 };
 
-                (smoothed_val, std_err, rob_weight)
+                (smoothed_val, std_err, rob_weight, result.iterations)
             }
         };
 
@@ -685,6 +689,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             std_error: std_err,
             residual: Some(residual),
             robustness_weight: rob_weight,
+            iterations_used: iterations,
         }))
     }
 

@@ -97,7 +97,7 @@ pub struct BatchLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     pub deferred_error: Option<LoessError>,
 
     /// Tolerance for auto-convergence
-    pub auto_convergence: Option<T>,
+    pub auto_converge: Option<T>,
 
     /// Whether to compute diagnostic statistics
     pub return_diagnostics: bool,
@@ -199,7 +199,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
             cv_kind: None,
             cv_seed: None,
             deferred_error: None,
-            auto_convergence: None,
+            auto_converge: None,
             return_diagnostics: false,
             compute_residuals: false,
             return_robustness_weights: false,
@@ -319,7 +319,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
 
     /// Enable auto-convergence for robustness iterations.
     pub fn auto_converge(mut self, tolerance: T) -> Self {
-        self.auto_convergence = Some(tolerance);
+        self.auto_converge = Some(tolerance);
         self
     }
 
@@ -466,7 +466,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
         }
 
         // Validate auto convergence tolerance
-        if let Some(tol) = self.auto_convergence {
+        if let Some(tol) = self.auto_converge {
             Validator::validate_tolerance(tol)?;
         }
 
@@ -519,7 +519,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             scaling_method: self.config.scaling_method,
             cv_fractions: self.config.cv_fractions,
             cv_kind: self.config.cv_kind,
-            auto_convergence: self.config.auto_convergence,
+            auto_converge: self.config.auto_converge,
             return_variance: self.config.interval_type,
             boundary_policy: self.config.boundary_policy,
             polynomial_degree: self.config.polynomial_degree,

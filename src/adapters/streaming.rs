@@ -102,7 +102,7 @@ pub struct StreamingLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg>
     pub iterations: usize,
 
     /// Convergence tolerance for early stopping (None = disabled)
-    pub auto_convergence: Option<T>,
+    pub auto_converge: Option<T>,
 
     /// Kernel weight function
     pub weight_function: WeightFunction,
@@ -223,7 +223,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
             compute_residuals: false,
             return_diagnostics: false,
             return_robustness_weights: false,
-            auto_convergence: None,
+            auto_converge: None,
             deferred_error: None,
             polynomial_degree: PolynomialDegree::default(),
             dimensions: 1,
@@ -337,7 +337,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
 
     /// Enable auto-convergence for robustness iterations.
     pub fn auto_converge(mut self, tolerance: T) -> Self {
-        self.auto_convergence = Some(tolerance);
+        self.auto_converge = Some(tolerance);
         self
     }
 
@@ -536,7 +536,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             distance_metric: self.config.distance_metric.clone(),
             cv_fractions: None,
             cv_kind: None,
-            auto_convergence: self.config.auto_convergence,
+            auto_converge: self.config.auto_converge,
             return_variance: None,
             cv_seed: None,
             surface_mode: self.config.surface_mode,

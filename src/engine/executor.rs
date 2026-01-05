@@ -298,7 +298,7 @@ pub struct LoessConfig<T: FloatLinalg + SolverLinalg> {
     pub cv_seed: Option<u64>,
 
     /// Convergence tolerance for early stopping of robustness iterations.
-    pub auto_convergence: Option<T>,
+    pub auto_converge: Option<T>,
 
     /// Configuration for standard errors and intervals.
     pub return_variance: Option<IntervalMethod<T>>,
@@ -380,7 +380,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Defau
             cv_fractions: None,
             cv_kind: None,
             cv_seed: None,
-            auto_convergence: None,
+            auto_converge: None,
             return_variance: None,
             boundary_policy: BoundaryPolicy::default(),
             polynomial_degree: PolynomialDegree::default(),
@@ -805,7 +805,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 y,
                 Some(best_frac),
                 Some(config.iterations),
-                config.auto_convergence,
+                config.auto_converge,
                 config.return_variance.as_ref(),
                 Some(&mut workspace),
             );
@@ -819,7 +819,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 y,
                 config.fraction,
                 Some(config.iterations),
-                config.auto_convergence,
+                config.auto_converge,
                 config.return_variance.as_ref(),
                 Some(&mut workspace),
             )

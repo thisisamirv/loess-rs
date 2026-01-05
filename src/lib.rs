@@ -280,8 +280,8 @@
 //! | **zero_weight_fallback**      | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
 //! | **return_residuals**          | false                                         | true/false           | Include residuals in output                      | All              |
 //! | **boundary_policy**           | `Extend`                                      | 4 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
-//! | **boundary_degree_fallback**  | true                                         | true/false           | Use linear fit at boundaries                     | All              |
-//! | **auto_convergence**          | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
+//! | **boundary_degree_fallback**  | true                                          | true/false           | Use linear fit at boundaries                     | All              |
+//! | **auto_converge**             | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
 //! | **return_robustness_weights** | false                                         | true/false           | Include final weights in output                  | All              |
 //! | **degree**                    | `Linear`                                      | 0, 1, 2, 3, 4        | Polynomial degree (constant to quartic)          | All              |
 //! | **dimensions**                | 1                                             | [1, ∞)               | Number of predictor dimensions                   | All              |
