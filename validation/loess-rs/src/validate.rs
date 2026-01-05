@@ -81,7 +81,11 @@ fn process_file(input_path: &Path, output_dir: &Path) -> Result<(), Box<dyn Erro
                 .and_then(|v| v.as_str())
                 == Some("direct");
 
-        if is_direct { Direct } else { Interpolation }
+        if is_direct {
+            Direct
+        } else {
+            Interpolation
+        }
     } else {
         Interpolation
     };
@@ -91,8 +95,9 @@ fn process_file(input_path: &Path, output_dir: &Path) -> Result<(), Box<dyn Erro
         .degree(degree)
         .iterations(data.params.iterations)
         .surface_mode(surface_mode)
-        .boundary_policy(NoBoundary)
-        .scaling_method(MAR)
+        .boundary_policy(NoBoundary) // Match R's loess behavior
+        .scaling_method(MAR) // Match R's loess behavior
+        .boundary_degree_fallback(false) // Match R's loess behavior
         .adapter(Batch)
         .build()?;
 

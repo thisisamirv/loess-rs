@@ -4,21 +4,21 @@
       "name": "scale_1000",
       "size": 1000,
       "iterations": 10,
-      "mean_time_ms": 0.9957,
-      "std_time_ms": 0.3792,
-      "median_time_ms": 0.8719,
-      "min_time_ms": 0.8175,
-      "max_time_ms": 2.07
+      "mean_time_ms": 1.1022,
+      "std_time_ms": 0.3387,
+      "median_time_ms": 0.9809,
+      "min_time_ms": 0.9189,
+      "max_time_ms": 2.0297
     },
     {
       "name": "scale_5000",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 4.9139,
-      "std_time_ms": 0.1496,
-      "median_time_ms": 4.9027,
-      "min_time_ms": 4.6427,
-      "max_time_ms": 5.1553
+      "mean_time_ms": 8.7626,
+      "std_time_ms": 0.2792,
+      "median_time_ms": 8.8888,
+      "min_time_ms": 8.3094,
+      "max_time_ms": 9.1338
     }
   ],
   "fraction": [
@@ -26,61 +26,61 @@
       "name": "fraction_0.05",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 4.4152,
-      "std_time_ms": 0.1472,
-      "median_time_ms": 4.4137,
-      "min_time_ms": 4.2152,
-      "max_time_ms": 4.5769
+      "mean_time_ms": 5.9803,
+      "std_time_ms": 0.1867,
+      "median_time_ms": 5.9555,
+      "min_time_ms": 5.7523,
+      "max_time_ms": 6.259
     },
     {
       "name": "fraction_0.1",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 4.2931,
-      "std_time_ms": 0.4714,
-      "median_time_ms": 4.1347,
-      "min_time_ms": 3.8857,
-      "max_time_ms": 5.517
+      "mean_time_ms": 8.5834,
+      "std_time_ms": 0.6797,
+      "median_time_ms": 8.5225,
+      "min_time_ms": 7.822,
+      "max_time_ms": 9.7997
     },
     {
       "name": "fraction_0.2",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 5.9745,
-      "std_time_ms": 0.1552,
-      "median_time_ms": 5.9192,
-      "min_time_ms": 5.8115,
-      "max_time_ms": 6.218
+      "mean_time_ms": 13.7131,
+      "std_time_ms": 0.2514,
+      "median_time_ms": 13.653,
+      "min_time_ms": 13.3343,
+      "max_time_ms": 14.2438
     },
     {
       "name": "fraction_0.3",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 8.6887,
-      "std_time_ms": 0.2087,
-      "median_time_ms": 8.6651,
-      "min_time_ms": 8.2715,
-      "max_time_ms": 9.059
+      "mean_time_ms": 19.6616,
+      "std_time_ms": 0.2112,
+      "median_time_ms": 19.659,
+      "min_time_ms": 19.408,
+      "max_time_ms": 20.02
     },
     {
       "name": "fraction_0.5",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 12.8497,
-      "std_time_ms": 1.2227,
-      "median_time_ms": 13.2352,
-      "min_time_ms": 11.086,
-      "max_time_ms": 14.1125
+      "mean_time_ms": 32.2544,
+      "std_time_ms": 0.5112,
+      "median_time_ms": 32.3058,
+      "min_time_ms": 31.1732,
+      "max_time_ms": 33.1185
     },
     {
       "name": "fraction_0.67",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 21.6342,
-      "std_time_ms": 0.2584,
-      "median_time_ms": 21.6011,
-      "min_time_ms": 21.349,
-      "max_time_ms": 22.141
+      "mean_time_ms": 44.8011,
+      "std_time_ms": 0.2697,
+      "median_time_ms": 44.8827,
+      "min_time_ms": 44.4379,
+      "max_time_ms": 45.1281
     }
   ],
   "iterations": [
@@ -88,61 +88,61 @@
       "name": "iterations_0",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 5.6938,
-      "std_time_ms": 0.2123,
-      "median_time_ms": 5.71,
-      "min_time_ms": 5.4114,
-      "max_time_ms": 5.9876
+      "mean_time_ms": 13.6781,
+      "std_time_ms": 0.2112,
+      "median_time_ms": 13.6334,
+      "min_time_ms": 13.3669,
+      "max_time_ms": 13.9637
     },
     {
       "name": "iterations_1",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 8.4371,
-      "std_time_ms": 0.532,
-      "median_time_ms": 8.3442,
-      "min_time_ms": 7.6396,
-      "max_time_ms": 9.5954
+      "mean_time_ms": 15.879,
+      "std_time_ms": 0.6152,
+      "median_time_ms": 15.6212,
+      "min_time_ms": 15.5559,
+      "max_time_ms": 17.556
     },
     {
       "name": "iterations_2",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 8.9508,
-      "std_time_ms": 0.7711,
-      "median_time_ms": 8.8658,
-      "min_time_ms": 7.9565,
-      "max_time_ms": 10.7236
+      "mean_time_ms": 16.6347,
+      "std_time_ms": 0.7249,
+      "median_time_ms": 16.4171,
+      "min_time_ms": 16.0329,
+      "max_time_ms": 18.4624
     },
     {
       "name": "iterations_3",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 9.728,
-      "std_time_ms": 0.7907,
-      "median_time_ms": 9.4762,
-      "min_time_ms": 8.8034,
-      "max_time_ms": 11.0862
+      "mean_time_ms": 17.56,
+      "std_time_ms": 0.6323,
+      "median_time_ms": 17.3068,
+      "min_time_ms": 17.0238,
+      "max_time_ms": 19.0458
     },
     {
       "name": "iterations_5",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 12.7306,
-      "std_time_ms": 4.5034,
-      "median_time_ms": 11.3806,
-      "min_time_ms": 10.752,
-      "max_time_ms": 25.5134
+      "mean_time_ms": 19.1715,
+      "std_time_ms": 0.6031,
+      "median_time_ms": 19.0039,
+      "min_time_ms": 18.6291,
+      "max_time_ms": 20.7679
     },
     {
       "name": "iterations_10",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 15.1525,
-      "std_time_ms": 0.778,
-      "median_time_ms": 15.0133,
-      "min_time_ms": 14.4706,
-      "max_time_ms": 17.0376
+      "mean_time_ms": 23.1824,
+      "std_time_ms": 0.6448,
+      "median_time_ms": 22.9621,
+      "min_time_ms": 22.5379,
+      "max_time_ms": 24.3773
     }
   ],
   "financial": [
@@ -150,31 +150,31 @@
       "name": "financial_500",
       "size": 500,
       "iterations": 10,
-      "mean_time_ms": 0.5705,
-      "std_time_ms": 0.0219,
-      "median_time_ms": 0.5783,
-      "min_time_ms": 0.5391,
-      "max_time_ms": 0.6011
+      "mean_time_ms": 0.5515,
+      "std_time_ms": 0.0081,
+      "median_time_ms": 0.5511,
+      "min_time_ms": 0.5388,
+      "max_time_ms": 0.5646
     },
     {
       "name": "financial_1000",
       "size": 1000,
       "iterations": 10,
-      "mean_time_ms": 0.9136,
-      "std_time_ms": 0.0623,
-      "median_time_ms": 0.916,
-      "min_time_ms": 0.8252,
-      "max_time_ms": 1.0607
+      "mean_time_ms": 1.0431,
+      "std_time_ms": 0.2239,
+      "median_time_ms": 0.972,
+      "min_time_ms": 0.9224,
+      "max_time_ms": 1.6723
     },
     {
       "name": "financial_5000",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 4.387,
-      "std_time_ms": 0.2688,
-      "median_time_ms": 4.3147,
-      "min_time_ms": 4.0185,
-      "max_time_ms": 4.7033
+      "mean_time_ms": 8.4245,
+      "std_time_ms": 0.8006,
+      "median_time_ms": 8.0535,
+      "min_time_ms": 7.8311,
+      "max_time_ms": 10.3123
     }
   ],
   "scientific": [
@@ -182,31 +182,31 @@
       "name": "scientific_500",
       "size": 500,
       "iterations": 10,
-      "mean_time_ms": 0.597,
-      "std_time_ms": 0.0311,
-      "median_time_ms": 0.5918,
-      "min_time_ms": 0.5479,
-      "max_time_ms": 0.6487
+      "mean_time_ms": 0.5851,
+      "std_time_ms": 0.0142,
+      "median_time_ms": 0.5817,
+      "min_time_ms": 0.567,
+      "max_time_ms": 0.608
     },
     {
       "name": "scientific_1000",
       "size": 1000,
       "iterations": 10,
-      "mean_time_ms": 1.1222,
-      "std_time_ms": 0.1708,
-      "median_time_ms": 1.0628,
-      "min_time_ms": 0.9751,
-      "max_time_ms": 1.5521
+      "mean_time_ms": 1.4252,
+      "std_time_ms": 0.5897,
+      "median_time_ms": 1.1812,
+      "min_time_ms": 1.0879,
+      "max_time_ms": 2.9485
     },
     {
       "name": "scientific_5000",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 5.4481,
-      "std_time_ms": 0.1822,
-      "median_time_ms": 5.4108,
-      "min_time_ms": 5.2054,
-      "max_time_ms": 5.78
+      "mean_time_ms": 11.1837,
+      "std_time_ms": 0.4289,
+      "median_time_ms": 11.0164,
+      "min_time_ms": 10.89,
+      "max_time_ms": 12.3353
     }
   ],
   "genomic": [
@@ -214,21 +214,21 @@
       "name": "genomic_1000",
       "size": 1000,
       "iterations": 10,
-      "mean_time_ms": 0.803,
-      "std_time_ms": 0.0315,
-      "median_time_ms": 0.7901,
-      "min_time_ms": 0.771,
-      "max_time_ms": 0.8538
+      "mean_time_ms": 0.9312,
+      "std_time_ms": 0.0681,
+      "median_time_ms": 0.9096,
+      "min_time_ms": 0.885,
+      "max_time_ms": 1.1141
     },
     {
       "name": "genomic_5000",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 4.2263,
-      "std_time_ms": 0.1689,
-      "median_time_ms": 4.2412,
-      "min_time_ms": 3.9203,
-      "max_time_ms": 4.4992
+      "mean_time_ms": 8.2543,
+      "std_time_ms": 0.678,
+      "median_time_ms": 8.0118,
+      "min_time_ms": 7.7631,
+      "max_time_ms": 10.1156
     }
   ],
   "pathological": [
@@ -236,41 +236,41 @@
       "name": "clustered",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 7.8632,
-      "std_time_ms": 0.5131,
-      "median_time_ms": 7.7664,
-      "min_time_ms": 7.2515,
-      "max_time_ms": 8.5797
+      "mean_time_ms": 19.7361,
+      "std_time_ms": 0.2054,
+      "median_time_ms": 19.7377,
+      "min_time_ms": 19.372,
+      "max_time_ms": 20.0319
     },
     {
       "name": "high_noise",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 15.8604,
-      "std_time_ms": 1.0301,
-      "median_time_ms": 16.3636,
-      "min_time_ms": 14.2453,
-      "max_time_ms": 17.0033
+      "mean_time_ms": 34.6754,
+      "std_time_ms": 0.6681,
+      "median_time_ms": 34.3982,
+      "min_time_ms": 34.2517,
+      "max_time_ms": 36.4606
     },
     {
       "name": "extreme_outliers",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 15.1063,
-      "std_time_ms": 0.9983,
-      "median_time_ms": 14.8206,
-      "min_time_ms": 14.1425,
-      "max_time_ms": 17.1673
+      "mean_time_ms": 23.3196,
+      "std_time_ms": 0.7149,
+      "median_time_ms": 23.0277,
+      "min_time_ms": 22.5387,
+      "max_time_ms": 24.6811
     },
     {
       "name": "constant_y",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 5.8769,
-      "std_time_ms": 0.3445,
-      "median_time_ms": 5.9386,
-      "min_time_ms": 5.2266,
-      "max_time_ms": 6.4313
+      "mean_time_ms": 13.7214,
+      "std_time_ms": 0.1626,
+      "median_time_ms": 13.6992,
+      "min_time_ms": 13.4852,
+      "max_time_ms": 14.0488
     }
   ],
   "polynomial_degrees": [
@@ -278,21 +278,21 @@
       "name": "degree_linear",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 5.864,
-      "std_time_ms": 0.6399,
-      "median_time_ms": 5.5116,
-      "min_time_ms": 5.3375,
-      "max_time_ms": 6.8669
+      "mean_time_ms": 13.9155,
+      "std_time_ms": 0.7623,
+      "median_time_ms": 13.6564,
+      "min_time_ms": 13.4852,
+      "max_time_ms": 16.0561
     },
     {
       "name": "degree_quadratic",
       "size": 5000,
       "iterations": 10,
-      "mean_time_ms": 7.8605,
-      "std_time_ms": 0.4565,
-      "median_time_ms": 7.6743,
-      "min_time_ms": 7.4968,
-      "max_time_ms": 8.9273
+      "mean_time_ms": 19.2145,
+      "std_time_ms": 0.4188,
+      "median_time_ms": 19.133,
+      "min_time_ms": 18.7538,
+      "max_time_ms": 20.1826
     }
   ],
   "dimensions": [
@@ -300,31 +300,31 @@
       "name": "1d_linear",
       "size": 2000,
       "iterations": 10,
-      "mean_time_ms": 2.2511,
-      "std_time_ms": 0.4127,
-      "median_time_ms": 2.0458,
-      "min_time_ms": 1.8742,
-      "max_time_ms": 3.1714
+      "mean_time_ms": 4.231,
+      "std_time_ms": 0.7126,
+      "median_time_ms": 3.8782,
+      "min_time_ms": 3.7451,
+      "max_time_ms": 6.0725
     },
     {
       "name": "2d_linear",
       "size": 1936,
       "iterations": 10,
-      "mean_time_ms": 6.6646,
-      "std_time_ms": 0.4166,
-      "median_time_ms": 6.5597,
-      "min_time_ms": 6.2268,
-      "max_time_ms": 7.5884
+      "mean_time_ms": 13.2633,
+      "std_time_ms": 0.1538,
+      "median_time_ms": 13.2376,
+      "min_time_ms": 13.0477,
+      "max_time_ms": 13.5305
     },
     {
       "name": "3d_linear",
       "size": 1728,
       "iterations": 10,
-      "mean_time_ms": 13.1675,
-      "std_time_ms": 0.1758,
-      "median_time_ms": 13.1184,
-      "min_time_ms": 12.9845,
-      "max_time_ms": 13.4888
+      "mean_time_ms": 28.5527,
+      "std_time_ms": 0.3943,
+      "median_time_ms": 28.5375,
+      "min_time_ms": 28.1076,
+      "max_time_ms": 29.525
     }
   ]
 }
