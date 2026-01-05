@@ -29,8 +29,8 @@
 //! **How LOESS works:**
 //!
 //! <div align="center">
-//! <object data="../../../docs/loess_smoothing_concept.svg" type="image/svg+xml" width="800" height="500">
-//! <img src="https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/loess_smoothing_concept.svg" alt="LOESS Smoothing Concept" width="800"/>
+//! <object data="../../../docs/loess_concept.svg" type="image/svg+xml" width="800" height="500">
+//! <img src="https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/loess_concept.svg" alt="LOESS Concept" width="800"/>
 //! </object>
 //! </div>
 //!

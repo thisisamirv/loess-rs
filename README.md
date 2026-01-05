@@ -11,7 +11,7 @@ A high-performance implementation of LOESS (Locally Estimated Scatterplot Smooth
 
 LOESS creates smooth curves through scattered data using local weighted neighborhoods:
 
-![LOESS Smoothing Concept](https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/loess_smoothing_concept.svg)
+![LOESS Smoothing Concept](https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/loess_concept.svg)
 
 ## LOESS vs. LOWESS
 
