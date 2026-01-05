@@ -7,6 +7,12 @@
 
 A high-performance implementation of LOESS (Locally Estimated Scatterplot Smoothing) in Rust. This crate provides a robust, production-ready implementation with support for confidence intervals, multiple kernel functions, and optimized execution modes.
 
+## How LOESS works
+
+LOESS creates smooth curves through scattered data using local weighted neighborhoods:
+
+![LOESS Smoothing Concept](https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/loess_smoothing_concept.svg)
+
 ## LOESS vs. LOWESS
 
 | Feature               | LOESS (This Crate)                | LOWESS                         |
@@ -16,8 +22,16 @@ A high-performance implementation of LOESS (Locally Estimated Scatterplot Smooth
 | **Flexibility**       | High (Distance metrics)           | Standard                       |
 | **Complexity**        | Higher (Matrix inversion)         | Lower (Weighted average/slope) |
 
+LOESS can fit higher-degree polynomials for more complex data:
+
+![Degree Comparison](https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/degree_comparison.svg)
+
+LOESS can also handle multivariate data (n-D), while LOWESS is limited to univariate data (1-D):
+
+![Multivariate LOESS](https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/multivariate_loess.svg)
+
 > [!TIP]
-> For a **LOWESS** implementation which is faster and simpler, use [`lowess`](https://github.com/thisisamirv/lowess).
+> **Note:** For a simple, lightweight, and fast **LOWESS** implementation, use [`lowess`](https://github.com/thisisamirv/lowess) crate.
 
 ## Features
 

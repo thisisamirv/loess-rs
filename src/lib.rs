@@ -36,10 +36,34 @@
 //! *LOESS creates smooth curves through scattered data using local weighted neighborhoods*
 //! </div>
 //!
-//! 1. For each point, select nearby neighbors (controlled by `fraction`)
-//! 2. Fit a weighted polynomial (closer points get higher weight)
-//! 3. Use the fitted value as the smoothed estimate
-//! 4. Optionally iterate to downweight outliers (robustness)
+//! ## LOESS vs. LOWESS
+//!
+//! | Feature               | LOESS (This Crate)                | LOWESS                         |
+//! |-----------------------|-----------------------------------|--------------------------------|
+//! | **Polynomial Degree** | Linear, Quadratic, Cubic, Quartic | Linear (Degree 1)              |
+//! | **Dimensions**        | Multivariate (n-D support)        | Univariate (1-D only)          |
+//! | **Flexibility**       | High (Distance metrics)           | Standard                       |
+//! | **Complexity**        | Higher (Matrix inversion)         | Lower (Weighted average/slope) |
+//!
+//! LOESS can fit higher-degree polynomials for more complex data:
+//!
+//! <div align="left">
+//! <object data="../../../docs/degree_comparison.svg" type="image/svg+xml" width="800" height="450">
+//! <img src="https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/degree_comparison.svg" alt="Degree Comparison" width="800"/>
+//! </object>
+//! </div>
+//!
+//! LOESS can also handle multivariate data (n-D), while LOWESS is limited to univariate data (1-D):
+//!
+//! <div align="left">
+//! <object data="../../../docs/multivariate_loess.svg" type="image/svg+xml" width="800" height="450">
+//! <img src="https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/multivariate_loess.svg" alt="Multivariate LOESS" width="800"/>
+//! </object>
+//! </div>
+//!
+//! <div style="background-color: #4c4b4fff; border-left: 5px solid #ff1818ff; padding: 12px; margin: 15px 0;">
+//!   <strong>Note:</strong> For a simple, lightweight, and fast <strong>LOWESS</strong> implementation, use <a href="https://github.com/thisisamirv/lowess">lowess</a> crate.
+//! </div>
 //!
 //! ## Quick Start
 //!
