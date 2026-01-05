@@ -229,6 +229,7 @@ pub type VertexPassFn<T> = fn(
     PolynomialDegree,
     &DistanceMetric<T>,
     &[T], // scales
+    bool, // boundary_degree_fallback
 );
 
 /// Signature for custom KD-tree builder function.

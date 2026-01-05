@@ -329,6 +329,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
         self
     }
 
+    /// Set whether to reduce polynomial degree at boundary vertices.
+    pub fn boundary_degree_fallback(mut self, enabled: bool) -> Self {
+        self.boundary_degree_fallback = enabled;
+        self
+    }
+
     /// Enable auto-convergence for robustness iterations.
     pub fn auto_converge(mut self, tolerance: T) -> Self {
         self.auto_convergence = Some(tolerance);

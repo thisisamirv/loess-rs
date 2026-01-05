@@ -235,6 +235,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 polynomial_degree,
                 distance_metric,
                 scales,
+                boundary_degree_fallback,
             );
         } else {
             for v_idx in 0..vertices.len() / dimensions {
@@ -371,6 +372,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                 polynomial_degree,
                 distance_metric,
                 scales,
+                boundary_degree_fallback,
             );
         } else {
             for (v_idx, cached) in self.vertex_neighborhoods.iter().enumerate() {
