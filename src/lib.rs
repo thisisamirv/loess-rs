@@ -32,9 +32,12 @@
 //! <object data="../../../docs/loess_smoothing_concept.svg" type="image/svg+xml" width="800" height="500">
 //! <img src="https://raw.githubusercontent.com/thisisamirv/loess-rs/main/docs/loess_smoothing_concept.svg" alt="LOESS Smoothing Concept" width="800"/>
 //! </object>
-//!
-//! *LOESS creates smooth curves through scattered data using local weighted neighborhoods*
 //! </div>
+//!
+//! 1. **Select Neighborhood**: Identify the $k$ nearest neighbors for the target point based on the smoothing `fraction`.
+//! 2. **Assign Weights**: Apply a distance-based kernel function (e.g., tricube) to weight these neighbors, prioritizing closer points.
+//! 3. **Local Fit**: Fit a weighted polynomial (linear or quadratic) to the neighborhood using Weighted Least Squares (WLS).
+//! 4. **Predict**: Evaluate the polynomial at the target point to obtain the smoothed value.
 //!
 //! ## LOESS vs. LOWESS
 //!
@@ -562,6 +565,7 @@
 //!
 //! *Standard LOESS (left) vs Robust LOESS (right) - robustness iterations downweight outliers*
 //! </div>
+//!
 //! - **Range**: [0, 1000]
 //! - **Effect**: More iterations = stronger outlier downweighting
 //!
