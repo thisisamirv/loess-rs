@@ -150,6 +150,11 @@ pub struct LoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug +
     /// Maximum number of vertices for interpolation.
     pub interpolation_vertices: Option<usize>,
 
+    /// Whether to reduce polynomial degree at boundary vertices during interpolation.
+    /// When `true` (default), vertices outside the tight data bounds use Linear fits.
+    /// Set to `false` to match R's loess behavior exactly.
+    pub boundary_degree_fallback: Option<bool>,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -227,6 +232,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             surface_mode: None,
             cell: None,
             interpolation_vertices: None,
+            boundary_degree_fallback: None,
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -493,6 +499,19 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
         self
     }
 
+    /// Set whether to reduce polynomial degree at boundary vertices during interpolation.
+    ///
+    /// When `true` (default), vertices outside the tight data bounds use Linear fits
+    /// to avoid unstable extrapolation.
+    /// Set to `false` to match R's loess behavior exactly.
+    pub fn boundary_degree_fallback(mut self, enabled: bool) -> Self {
+        if self.boundary_degree_fallback.is_some() {
+            self.duplicate_param = Some("boundary_degree_fallback");
+        }
+        self.boundary_degree_fallback = Some(enabled);
+        self
+    }
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -616,6 +635,9 @@ impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> Loess
         if let Some(sm) = builder.surface_mode {
             result.surface_mode = sm;
         }
+        if let Some(bdf) = builder.boundary_degree_fallback {
+            result.boundary_degree_fallback = bdf;
+        }
 
         // ++++++++++++++++++++++++++++++++++++++
         // +               DEV                  +
@@ -716,6 +738,9 @@ impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> Loess
         if let Some(sm) = builder.surface_mode {
             result.surface_mode = sm;
         }
+        if let Some(bdf) = builder.boundary_degree_fallback {
+            result.boundary_degree_fallback = bdf;
+        }
 
         // ++++++++++++++++++++++++++++++++++++++
         // +               DEV                  +
@@ -812,6 +837,9 @@ impl<T: FloatLinalg + DistanceLinalg + SolverLinalg + Debug + Send + Sync> Loess
         }
         if let Some(sm) = builder.surface_mode {
             result.surface_mode = sm;
+        }
+        if let Some(bdf) = builder.boundary_degree_fallback {
+            result.boundary_degree_fallback = bdf;
         }
 
         // ++++++++++++++++++++++++++++++++++++++

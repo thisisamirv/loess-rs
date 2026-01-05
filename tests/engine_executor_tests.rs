@@ -153,6 +153,7 @@ fn test_config_custom() {
         surface_mode: SurfaceMode::default(),
         interpolation_vertices: None,
         cell: Some(0.2),
+        boundary_degree_fallback: true,
     };
 
     assert_eq!(config.fraction, Some(0.5));
@@ -357,6 +358,7 @@ fn test_config_f32() {
         surface_mode: SurfaceMode::default(),
         interpolation_vertices: None,
         cell: Some(0.2),
+        boundary_degree_fallback: true,
     };
 
     assert_eq!(config.fraction, Some(0.5f32));
@@ -420,6 +422,7 @@ fn test_executor_convergence_zero_tolerance() {
         surface_mode: SurfaceMode::default(),
         interpolation_vertices: None,
         cell: Some(0.2),
+        boundary_degree_fallback: true,
     };
 
     let output = LoessExecutor::run_with_config(&x, &y, config);

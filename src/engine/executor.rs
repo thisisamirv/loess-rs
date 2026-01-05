@@ -324,6 +324,11 @@ pub struct LoessConfig<T: FloatLinalg + SolverLinalg> {
     /// Used to determine subdivision when `surface_mode` is `Interpolation`.
     pub cell: Option<f64>,
 
+    /// Whether to reduce polynomial degree to Linear at boundary vertices during interpolation.
+    /// When `true` (default), vertices outside the tight data bounds use Linear fits to avoid
+    /// unstable extrapolation. Set to `false` to match R's loess behavior exactly.
+    pub boundary_degree_fallback: bool,
+
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
@@ -383,6 +388,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Defau
             surface_mode: SurfaceMode::default(),
             interpolation_vertices: None,
             cell: None,
+            boundary_degree_fallback: true,
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -436,6 +442,9 @@ pub struct LoessExecutor<T: FloatLinalg + SolverLinalg> {
 
     /// Cell size for interpolation subdivision.
     pub cell: Option<f64>,
+
+    /// Whether to reduce polynomial degree to Linear at boundary vertices during interpolation.
+    pub boundary_degree_fallback: bool,
 
     // ++++++++++++++++++++++++++++++++++++++
     // +               DEV                  +
@@ -504,6 +513,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             surface_mode: SurfaceMode::default(),
             interpolation_vertices: None,
             cell: None,
+            boundary_degree_fallback: true,
             custom_smooth_pass: None,
             custom_cv_pass: None,
             custom_interval_pass: None,
@@ -532,6 +542,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
             .surface_mode(config.surface_mode)
             .interpolation_vertices(config.interpolation_vertices)
             .cell(config.cell)
+            .boundary_degree_fallback(config.boundary_degree_fallback)
             // ++++++++++++++++++++++++++++++++++++++
             // +               DEV                  +
             // ++++++++++++++++++++++++++++++++++++++
@@ -620,6 +631,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
     /// Set the interpolation cell size.
     pub fn cell(mut self, cell: Option<f64>) -> Self {
         self.cell = cell;
+        self
+    }
+
+    /// Set whether to reduce polynomial degree at boundary vertices.
+    pub fn boundary_degree_fallback(mut self, enabled: bool) -> Self {
+        self.boundary_degree_fallback = enabled;
         self
     }
 
@@ -969,6 +986,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 self.zero_weight_fallback,
                 self.polynomial_degree,
                 &self.distance_metric,
+                self.boundary_degree_fallback,
             );
             _surface_opt = Some(surface);
 
@@ -1133,6 +1151,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                             &self.distance_metric,
                             &scales_local,
                             &workspace.executor_buffer.robustness_weights,
+                            self.boundary_degree_fallback,
                         );
 
                         // Re-evaluate at data points using original x (not augmented)

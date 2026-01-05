@@ -138,6 +138,9 @@ pub struct OnlineLoessBuilder<T: FloatLinalg + DistanceLinalg + SolverLinalg> {
     /// Evaluation mode (default: Interpolation)
     pub surface_mode: SurfaceMode,
 
+    /// Whether to reduce polynomial degree at boundary vertices during interpolation.
+    pub boundary_degree_fallback: bool,
+
     /// Tracks if any parameter was set multiple times (for validation)
     #[doc(hidden)]
     pub(crate) duplicate_param: Option<&'static str>,
@@ -210,6 +213,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Onlin
             cell: None,
             interpolation_vertices: None,
             surface_mode: SurfaceMode::default(),
+            boundary_degree_fallback: true,
             duplicate_param: None,
             // ++++++++++++++++++++++++++++++++++++++
             // +               DEV                  +
@@ -576,6 +580,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     surface_mode: self.config.surface_mode,
                     interpolation_vertices: self.config.interpolation_vertices,
                     cell: self.config.cell,
+                    boundary_degree_fallback: self.config.boundary_degree_fallback,
                     // ++++++++++++++++++++++++++++++++++++++
                     // +               DEV                  +
                     // ++++++++++++++++++++++++++++++++++++++
@@ -635,6 +640,7 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                     surface_mode: self.config.surface_mode,
                     interpolation_vertices: self.config.interpolation_vertices,
                     cell: self.config.cell,
+                    boundary_degree_fallback: self.config.boundary_degree_fallback,
                     // ++++++++++++++++++++++++++++++++++++++
                     // +               DEV                  +
                     // ++++++++++++++++++++++++++++++++++++++

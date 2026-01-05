@@ -123,6 +123,7 @@
 //!     .robustness_method(Bisquare)                     // Outlier handling
 //!     .surface_mode(Interpolation)                     // Surface evaluation mode
 //!     .boundary_policy(Extend)                         // Boundary handling
+//!     .boundary_degree_fallback(true)                  // Boundary degree fallback
 //!     .scaling_method(MAD)                             // Scaling method
 //!     .cell(0.2)                                       // Interpolation cell size
 //!     .interpolation_vertices(1000)                    // Maximum vertices for interpolation
@@ -276,6 +277,7 @@
 //! | **zero_weight_fallback**      | `UseLocalMean`                                | 3 fallback options   | Behavior when all weights are zero               | All              |
 //! | **return_residuals**          | false                                         | true/false           | Include residuals in output                      | All              |
 //! | **boundary_policy**           | `Extend`                                      | 4 policy options     | Edge handling strategy (reduces boundary bias)   | All              |
+//! | **boundary_degree_fallback**  | true                                         | true/false           | Use linear fit at boundaries                     | All              |
 //! | **auto_convergence**          | None                                          | Tolerance value      | Early stopping for robustness                    | All              |
 //! | **return_robustness_weights** | false                                         | true/false           | Include final weights in output                  | All              |
 //! | **degree**                    | `Linear`                                      | 0, 1, 2, 3, 4        | Polynomial degree (constant to quartic)          | All              |
@@ -607,15 +609,15 @@
 //!
 //! **Kernel selection guide:**
 //!
-//! | Kernel                                         | Efficiency | Smoothness        |
-//! |------------------------------------------------|------------|-------------------|
-//! | `Tricube`                                      | 0.998      | Very smooth       |
-//! | `Epanechnikov`                                 | 1.000      | Smooth            |
-//! | `Gaussian`                                     | 0.961      | Infinitely smooth |
-//! | `Biweight`                                     | 0.995      | Very smooth       |
-//! | `Cosine`                                       | 0.999      | Smooth            |
-//! | `Triangle`                                     | 0.989      | Moderate          |
-//! | `Uniform`                                      | 0.943      | None              |
+//! | Kernel         | Efficiency | Smoothness        |
+//! |----------------|------------|-------------------|
+//! | `Tricube`      | 0.998      | Very smooth       |
+//! | `Epanechnikov` | 1.000      | Smooth            |
+//! | `Gaussian`     | 0.961      | Infinitely smooth |
+//! | `Biweight`     | 0.995      | Very smooth       |
+//! | `Cosine`       | 0.999      | Smooth            |
+//! | `Triangle`     | 0.989      | Moderate          |
+//! | `Uniform`      | 0.943      | None              |
 //!
 //! *Efficiency = AMISE relative to Epanechnikov (1.0 = optimal)*
 //!
@@ -695,11 +697,11 @@
 //!
 //! **Available methods:**
 //!
-//! | Method                                   | Behavior                | Use Case                  |
-//! |------------------------------------------|-------------------------|---------------------------|
-//! | `Bisquare`                               | Smooth downweighting    | General-purpose, balanced |
-//! | `Huber`                                  | Linear beyond threshold | Moderate outliers         |
-//! | `Talwar`                                 | Hard threshold (0 or 1) | Extreme contamination     |
+//! | Method     | Behavior                | Use Case                  |
+//! |------------|-------------------------|---------------------------|
+//! | `Bisquare` | Smooth downweighting    | General-purpose, balanced |
+//! | `Huber`    | Linear beyond threshold | Moderate outliers         |
+//! | `Talwar`   | Hard threshold (0 or 1) | Extreme contamination     |
 //!
 //! ### Zero-Weight Fallback
 //!
@@ -784,6 +786,40 @@
 //! > **Note:** For nD (multivariate) data, `Extend` currently defaults to `NoBoundary` behavior
 //! > to preserve regression accuracy, as constant extension can distort local gradients.
 //! > `Reflect` and `Zero` are fully supported in nD.
+//!
+//! ### Boundary Degree Fallback
+//!
+//! Controls whether polynomial degree is reduced at boundary vertices during interpolation.
+//!
+//! When using `Interpolation` surface mode with higher polynomial degrees (Quadratic, Cubic, etc.),
+//! vertices outside the "tight data bounds" can produce unstable extrapolation. This option
+//! controls whether to fall back to Linear fits at those boundary vertices:
+//!
+//! - **`true`** (default): Reduce to Linear at boundary vertices (more stable)
+//! - **`false`**: Use full requested degree everywhere (matches R's `loess` exactly)
+//!
+//! ```rust
+//! use loess_rs::prelude::*;
+//! # let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+//! # let y = vec![2.0, 4.1, 5.9, 8.2, 9.8];
+//!
+//! // Default (stable boundary handling)
+//! let stable_model = Loess::<f64>::new()
+//!     .degree(Quadratic)
+//!     .adapter(Batch)
+//!     .build()?;
+//!
+//! // Match R's loess behavior exactly
+//! let r_compatible = Loess::<f64>::new()
+//!     .degree(Quadratic)
+//!     .boundary_degree_fallback(false)
+//!     .adapter(Batch)
+//!     .build()?;
+//! # Result::<(), LoessError>::Ok(())
+//! ```
+//!
+//! > **Note:** This setting only affects `Interpolation` mode. In `Direct` mode, the full
+//! > polynomial degree is always used at every point.
 //!
 //! ### Auto-Convergence
 //!

@@ -115,6 +115,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         zero_weight_fallback: ZeroWeightFallback,
         polynomial_degree: PolynomialDegree,
         distance_metric: &DistanceMetric<T>,
+        boundary_degree_fallback: bool,
     ) -> Self
     where
         D: PointDistance<T>,
@@ -248,11 +249,12 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                         || vertex[d] > tight_upper[d] + T::epsilon()
                 });
 
-                let effective_degree = if is_outside && polynomial_degree.value() > 1 {
-                    PolynomialDegree::Linear
-                } else {
-                    polynomial_degree
-                };
+                let effective_degree =
+                    if boundary_degree_fallback && is_outside && polynomial_degree.value() > 1 {
+                        PolynomialDegree::Linear
+                    } else {
+                        polynomial_degree
+                    };
 
                 // Find neighbors for this vertex using workspace buffers
                 kdtree.find_k_nearest(
@@ -327,6 +329,7 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
         distance_metric: &DistanceMetric<T>,
         scales: &[T],
         robustness_weights: &[T],
+        boundary_degree_fallback: bool,
     ) where
         F: FnMut(&[T], &Neighborhood<T>, &mut FittingBuffer<T>, PolynomialDegree) -> Option<Vec<T>>,
     {
@@ -380,11 +383,12 @@ impl<T: Float + Debug + Send + Sync + 'static> InterpolationSurface<T> {
                         || vertex[d] > tight_upper[d] + T::epsilon()
                 });
 
-                let effective_degree = if is_outside && polynomial_degree.value() > 1 {
-                    PolynomialDegree::Linear
-                } else {
-                    polynomial_degree
-                };
+                let effective_degree =
+                    if boundary_degree_fallback && is_outside && polynomial_degree.value() > 1 {
+                        PolynomialDegree::Linear
+                    } else {
+                        polynomial_degree
+                    };
 
                 // Use cached neighborhood instead of KD-tree search
                 neighborhood.indices.clear();

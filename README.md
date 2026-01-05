@@ -46,38 +46,70 @@ LOESS can also handle multivariate data (n-D), while LOWESS is limited to univar
 
 ## Performance
 
-Benchmarked against R's `loess`. Achieves **3.3×–25× faster performance** across all tested scenarios. No regressions observed.
+Benchmarked against R's `loess`. Achieves **4.4×–53× faster performance** across all tested scenarios. No regressions observed.
 
 ### Summary
 
 | Category               | Matched | Median Speedup | Mean Speedup |
 |------------------------|---------|----------------|--------------|
-| **Fraction**           | 6       | **6.03×**      | 9.30×        |
-| **Iterations**         | 6       | **8.79×**      | 8.91×        |
-| **Polynomial Degrees** | 2       | **8.84×**      | 8.84×        |
-| **Pathological**       | 4       | **6.88×**      | 7.58×        |
-| **Financial**          | 3       | **4.30×**      | 4.36×        |
-| **Scalability**        | 2       | **3.99×**      | 3.99×        |
-| **Dimensions**         | 3       | **3.85×**      | 3.91×        |
-| **Scientific**         | 3       | **3.75×**      | 3.70×        |
-| **Genomic**            | 2       | **3.32×**      | 3.32×        |
+| **Polynomial Degrees** | 2       | **21.67×**     | 21.67×       |
+| **Fraction**           | 6       | **13.36×**     | 19.70×       |
+| **Iterations**         | 6       | **16.35×**     | 15.90×       |
+| **Pathological**       | 4       | **16.14×**     | 16.27×       |
+| **Dimensions**         | 3       | **7.98×**      | 8.01×        |
+| **Scalability**        | 2       | **5.86×**      | 5.86×        |
+| **Genomic**            | 2       | **5.27×**      | 5.27×        |
+| **Financial**          | 3       | **4.88×**      | 5.97×        |
+| **Scientific**         | 3       | **4.46×**      | 5.28×        |
 
 ### Top 10 Performance Wins
 
 | Benchmark        | Rust   | R       | Speedup    |
 |------------------|--------|---------|------------|
-| fraction_0.67    | 0.86ms | 21.63ms | **25.23×** |
-| fraction_0.5     | 1.14ms | 12.85ms | **11.25×** |
-| iterations_1     | 0.76ms | 8.44ms  | **11.12×** |
-| high_noise       | 1.50ms | 15.86ms | **10.55×** |
-| degree_quadratic | 0.79ms | 7.86ms  | **9.91×**  |
-| iterations_2     | 0.92ms | 8.95ms  | **9.76×**  |
-| iterations_3     | 1.08ms | 9.73ms  | **9.01×**  |
-| iterations_5     | 1.49ms | 12.73ms | **8.57×**  |
-| degree_linear    | 0.76ms | 5.86ms  | **7.76×**  |
-| iterations_0     | 0.75ms | 5.69ms  | **7.56×**  |
+| fraction_0.67    | 0.83ms | 44.80ms | **53.71×** |
+| fraction_0.5     | 1.22ms | 32.25ms | **26.50×** |
+| degree_quadratic | 0.75ms | 19.21ms | **25.52×** |
+| high_noise       | 1.60ms | 34.68ms | **21.68×** |
+| iterations_1     | 0.80ms | 15.88ms | **19.94×** |
+| iterations_0     | 0.75ms | 13.68ms | **18.25×** |
+| degree_linear    | 0.78ms | 13.92ms | **17.81×** |
+| clustered        | 1.15ms | 19.74ms | **17.17×** |
+| iterations_2     | 0.97ms | 16.63ms | **17.13×** |
+| iterations_3     | 1.13ms | 17.56ms | **15.57×** |
 
 Check [Benchmarks](https://github.com/thisisamirv/loess-rs/tree/bench/benchmarks) for detailed results and reproducible benchmarking code.
+
+## Robustness Advantages
+
+This implementation includes several robustness features beyond R's `loess`:
+
+### MAD-Based Scale Estimation
+
+Uses **MAD-based scale estimation** for robustness weight calculations:
+
+```text
+s = median(|r_i - median(r)|)
+```
+
+MAD is a **breakdown-point-optimal** estimator—it remains valid even when up to 50% of data are outliers, compared to the median of absolute residuals used by some other implementations.
+
+Median Absolute Residual (MAR), which is the default Cleveland's choice, is also available through the `scaling_method` parameter.
+
+### Configurable Boundary Policies
+
+R's `loess` uses asymmetric windows at data boundaries, which can introduce edge bias. This implementation offers configurable **boundary policies** to mitigate this:
+
+- **Extend** (default): Pad with constant values for symmetric windows
+- **Reflect**: Mirror data at boundaries (best for periodic data)
+- **Zero**: Pad with zeros (signal processing applications)
+- **NoBoundary**: Original R behavior (no padding)
+
+### Boundary Degree Fallback
+
+When using `Interpolation` mode with higher polynomial degrees (Quadratic, Cubic), vertices outside the tight data bounds can produce unstable extrapolation. This implementation offers a configurable **boundary degree fallback**:
+
+- **`true`** (default): Reduce to Linear fits at boundary vertices (more stable)
+- **`false`**: Use full requested degree everywhere (matches R exactly)
 
 ## Validation
 
@@ -175,6 +207,9 @@ Loess::new()
 
     // Boundary handling - default: Extend
     .boundary_policy(Reflect)
+
+    // Boundary degree fallback - default: true
+    .boundary_degree_fallback(true)
 
     // Confidence intervals (Batch only)
     .confidence_intervals(0.95)
@@ -344,18 +379,6 @@ cargo run --example streaming_smoothing
 ## MSRV
 
 Rust **1.85.0** or later (2024 Edition).
-
-## Robustness Advantages
-
-This implementation uses **MAD-based scale estimation** for robustness weight calculations:
-
-```text
-s = median(|r_i - median(r)|)
-```
-
-MAD is a **breakdown-point-optimal** estimator—it remains valid even when up to 50% of data are outliers, compared to the median of absolute residuals used by some other implementations.
-
-Median Absolute Residual (MAR), which is the default Cleveland's choice, is also available through the `scaling_method` parameter.
 
 ## Contributing
 

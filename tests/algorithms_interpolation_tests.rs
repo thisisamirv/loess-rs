@@ -84,6 +84,7 @@ fn test_build_simple_1d() {
         ZeroWeightFallback::default(),
         PolynomialDegree::default(),
         &DistanceMetric::default(),
+        true,
     );
 
     assert!(surface.vertex_data.len() >= 4); // At least 2 vertices * 2 values each
@@ -150,6 +151,7 @@ fn test_build_simple_2d() {
         ZeroWeightFallback::default(),
         PolynomialDegree::default(),
         &DistanceMetric::default(),
+        true,
     );
 
     // Initial cell has 4 vertices (2^2)
@@ -205,6 +207,7 @@ fn test_interpolate_1d_linear() {
         ZeroWeightFallback::default(),
         PolynomialDegree::default(),
         &DistanceMetric::default(),
+        true,
     );
 
     // Test points
@@ -263,6 +266,7 @@ fn test_interpolate_2d_bilinear() {
         ZeroWeightFallback::default(),
         PolynomialDegree::default(),
         &DistanceMetric::default(),
+        true,
     );
 
     // Evaluate at center (1, 1) -> 2(1) + 3(1) + 1 = 6
@@ -326,6 +330,7 @@ fn test_adaptive_subdivision() {
         ZeroWeightFallback::default(),
         PolynomialDegree::default(),
         &DistanceMetric::default(),
+        true,
     );
 
     // Should have more than just the initial 2 vertices
@@ -383,6 +388,7 @@ fn test_interpolate_boundary_clamping() {
         ZeroWeightFallback::default(),
         PolynomialDegree::default(),
         &DistanceMetric::default(),
+        true,
     );
 
     // Far outside right (should be clamped to upper bound value)
@@ -441,6 +447,7 @@ fn test_fitter_fallback() {
         ZeroWeightFallback::default(),
         PolynomialDegree::default(),
         &DistanceMetric::default(),
+        true,
     );
 
     // Should use mean (2.0)
