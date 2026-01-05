@@ -271,6 +271,42 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Onlin
         self
     }
 
+    /// Set the polynomial degree.
+    pub fn polynomial_degree(mut self, degree: PolynomialDegree) -> Self {
+        self.polynomial_degree = degree;
+        self
+    }
+
+    /// Set the number of dimensions explicitly (though usually inferred from input).
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        self.dimensions = dims;
+        self
+    }
+
+    /// Set the distance metric.
+    pub fn distance_metric(mut self, metric: DistanceMetric<T>) -> Self {
+        self.distance_metric = metric;
+        self
+    }
+
+    /// Set the evaluation mode (Interpolation or Direct).
+    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
+        self.surface_mode = mode;
+        self
+    }
+
+    /// Set the interpolation cell size (default: 0.2).
+    pub fn cell(mut self, cell: f64) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+
+    /// Set the maximum number of vertices for interpolation.
+    pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
+        self.interpolation_vertices = Some(vertices);
+        self
+    }
+
     /// Enable auto-convergence for robustness iterations.
     pub fn auto_converge(mut self, tolerance: T) -> Self {
         self.auto_convergence = Some(tolerance);
@@ -308,24 +344,6 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Onlin
     /// Set the update mode for incremental processing.
     pub fn update_mode(mut self, mode: UpdateMode) -> Self {
         self.update_mode = mode;
-        self
-    }
-
-    /// Set the interpolation cell size (default: 0.2).
-    pub fn cell(mut self, cell: f64) -> Self {
-        self.cell = Some(cell);
-        self
-    }
-
-    /// Set the maximum number of vertices for interpolation.
-    pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
-        self.interpolation_vertices = Some(vertices);
-        self
-    }
-
-    /// Set the evaluation mode (Interpolation or Direct).
-    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
-        self.surface_mode = mode;
         self
     }
 

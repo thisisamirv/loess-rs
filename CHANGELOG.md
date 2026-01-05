@@ -23,11 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved data propagation in `InterpolationSurface` to ensure all necessary coordinate and value slices are available to custom pass implementations.
 - Updated `LoessExecutor` to correctly handle augmented data when switching between direct and interpolation modes.
 - Updated `InterpolationSurface::build` to accept and propagate `polynomial_degree`, `weight_function`, `zero_weight_fallback`, `distance_metric`, and `scales` for `custom_vertex_pass`. Also, updated `LoessExecutor` to pass these configured values correctly.
+- Improved documentation.
 
 ### Fixed
 
 - Fixed a potential crash in parallel interpolation refinement by correctly propagating augmented data slices to vertex fitting functions.
 - Fixed inconsistent parameter types in custom pass callbacks.
+- Fixed missing setters for online and streaming adapters.
 
 ## [0.1.0]
 

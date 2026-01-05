@@ -267,21 +267,27 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
         self
     }
 
-    /// Enable auto-convergence for robustness iterations.
-    pub fn auto_converge(mut self, tolerance: T) -> Self {
-        self.auto_convergence = Some(tolerance);
+    /// Set the polynomial degree.
+    pub fn polynomial_degree(mut self, degree: PolynomialDegree) -> Self {
+        self.polynomial_degree = degree;
         self
     }
 
-    /// Enable returning residuals in the output.
-    pub fn compute_residuals(mut self, enabled: bool) -> Self {
-        self.compute_residuals = enabled;
+    /// Set the number of dimensions explicitly.
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        self.dimensions = dims;
         self
     }
 
-    /// Enable returning robustness weights in the result.
-    pub fn return_robustness_weights(mut self, enabled: bool) -> Self {
-        self.return_robustness_weights = enabled;
+    /// Set the distance metric.
+    pub fn distance_metric(mut self, metric: DistanceMetric<T>) -> Self {
+        self.distance_metric = metric;
+        self
+    }
+
+    /// Set surface evaluation mode (Interpolation or Direct).
+    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
+        self.surface_mode = mode;
         self
     }
 
@@ -297,9 +303,21 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
         self
     }
 
-    /// Set surface evaluation mode (Interpolation or Direct).
-    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
-        self.surface_mode = mode;
+    /// Enable auto-convergence for robustness iterations.
+    pub fn auto_converge(mut self, tolerance: T) -> Self {
+        self.auto_convergence = Some(tolerance);
+        self
+    }
+
+    /// Enable returning residuals in the output.
+    pub fn compute_residuals(mut self, enabled: bool) -> Self {
+        self.compute_residuals = enabled;
+        self
+    }
+
+    /// Enable returning robustness weights in the result.
+    pub fn return_robustness_weights(mut self, enabled: bool) -> Self {
+        self.return_robustness_weights = enabled;
         self
     }
 
@@ -341,13 +359,6 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
     // +               DEV                  +
     // ++++++++++++++++++++++++++++++++++++++
 
-    /// Set a custom KD-tree builder function.
-    #[doc(hidden)]
-    pub fn custom_kdtree_builder(mut self, kdtree_builder_fn: Option<KDTreeBuilderFn<T>>) -> Self {
-        self.custom_kdtree_builder = kdtree_builder_fn;
-        self
-    }
-
     /// Set a custom smooth pass function.
     #[doc(hidden)]
     pub fn custom_smooth_pass(mut self, pass: SmoothPassFn<T>) -> Self {
@@ -369,17 +380,24 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg> Batch
         self
     }
 
-    /// Set whether to use parallel execution.
-    #[doc(hidden)]
-    pub fn parallel(mut self, parallel: bool) -> Self {
-        self.parallel = Some(parallel);
-        self
-    }
-
     /// Set the execution backend hint.
     #[doc(hidden)]
     pub fn backend(mut self, backend: Backend) -> Self {
         self.backend = Some(backend);
+        self
+    }
+
+    /// Set a custom KD-tree builder function.
+    #[doc(hidden)]
+    pub fn custom_kdtree_builder(mut self, kdtree_builder_fn: Option<KDTreeBuilderFn<T>>) -> Self {
+        self.custom_kdtree_builder = kdtree_builder_fn;
+        self
+    }
+
+    /// Set whether to use parallel execution.
+    #[doc(hidden)]
+    pub fn parallel(mut self, parallel: bool) -> Self {
+        self.parallel = Some(parallel);
         self
     }
 

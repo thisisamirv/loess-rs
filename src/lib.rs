@@ -1462,29 +1462,16 @@ mod api;
 // ============================================================================
 
 /// Standard LOESS prelude.
-///
-/// This module is intended to be wildcard-imported for convenient access
-/// to the most commonly used types:
-///
-/// ```
-/// use loess_rs::prelude::*;
-/// ```
 pub mod prelude {
     pub use crate::api::{
         Adapter::{Batch, Online, Streaming},
-        BoundaryPolicy::Extend,
-        BoundaryPolicy::NoBoundary,
-        BoundaryPolicy::Reflect,
-        BoundaryPolicy::Zero,
+        BoundaryPolicy::{Extend, NoBoundary, Reflect, Zero},
         DistanceMetric::{Chebyshev, Euclidean, Manhattan, Minkowski, Normalized, Weighted},
         KFold, LOOCV, LoessBuilder as Loess, LoessError, LoessResult,
-        MergeStrategy::Average,
-        MergeStrategy::TakeFirst,
-        MergeStrategy::WeightedAverage,
+        MergeStrategy::{Average, TakeFirst, WeightedAverage},
         PolynomialDegree::{Constant, Cubic, Linear, Quadratic, Quartic},
         RobustnessMethod::{Bisquare, Huber, Talwar},
-        ScalingMethod::MAD,
-        ScalingMethod::MAR,
+        ScalingMethod::{MAD, MAR},
         SurfaceMode::{Direct, Interpolation},
         UpdateMode::{Full, Incremental},
         WeightFunction::{Biweight, Cosine, Epanechnikov, Gaussian, Triangle, Tricube, Uniform},

@@ -154,8 +154,10 @@ pub enum SurfaceMode {
 /// Signature for custom smooth pass function
 #[doc(hidden)]
 pub type SmoothPassFn<T> = fn(
-    &[T],               // x (flattened, row-major for multi-dimensional)
-    &[T],               // y
+    &[T],               // x (query points)
+    &[T],               // y (associated values)
+    &[T],               // x_search (augmented data for neighbor search)
+    &[T],               // y_search (augmented data for fitting)
     usize,              // dimensions
     usize,              // window_size
     bool,               // use_robustness
@@ -181,8 +183,10 @@ pub type CVPassFn<T> = fn(
 /// Signature for custom interval estimation pass function
 #[doc(hidden)]
 pub type IntervalPassFn<T> = fn(
-    &[T],               // x (flattened, row-major for multi-dimensional)
-    &[T],               // y
+    &[T],               // x (query points)
+    &[T],               // y (associated values)
+    &[T],               // x_search (augmented data for neighbor search)
+    &[T],               // y_search (augmented data for fitting)
     &[T],               // y_smooth
     usize,              // dimensions
     usize,              // window_size
@@ -984,6 +988,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 callback(
                     x,
                     y,
+                    &ax,
+                    &ay,
                     dims,
                     window_size,
                     false, // use_robustness (first pass)
@@ -1141,6 +1147,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                         callback(
                             x,
                             y,
+                            &ax,
+                            &ay,
                             dims,
                             window_size,
                             true, // use_robustness
@@ -1238,6 +1246,8 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + 'static + SolverLin
                 Some(callback(
                     x,
                     y,
+                    &ax,
+                    &ay,
                     &y_smooth,
                     dims,
                     window_size,

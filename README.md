@@ -192,13 +192,49 @@ Loess::new()
     .build()?;
 ```
 
-### Execution Modes
+## Result Structure
 
-| Adapter     | Use Case                          | Features                        |
-|-------------|-----------------------------------|---------------------------------|
-| `Batch`     | Complete datasets in memory       | All features supported          |
-| `Streaming` | Large datasets (>100K points)     | Chunked processing, overlap     |
-| `Online`    | Real-time data, sensor streams    | Incremental updates             |
+```rust
+pub struct LoessResult<T> {
+    /// Sorted x values (independent variable)
+    pub x: Vec<T>,
+
+    /// Smoothed y values (dependent variable)
+    pub y: Vec<T>,
+
+    /// Point-wise standard errors of the fit
+    pub standard_errors: Option<Vec<T>>,
+
+    /// Confidence interval bounds (if computed)
+    pub confidence_lower: Option<Vec<T>>,
+    pub confidence_upper: Option<Vec<T>>,
+
+    /// Prediction interval bounds (if computed)
+    pub prediction_lower: Option<Vec<T>>,
+    pub prediction_upper: Option<Vec<T>>,
+
+    /// Residuals (y - fit)
+    pub residuals: Option<Vec<T>>,
+
+    /// Final robustness weights from outlier downweighting
+    pub robustness_weights: Option<Vec<T>>,
+
+    /// Detailed fit diagnostics (RMSE, R^2, Effective DF, etc.)
+    pub diagnostics: Option<Diagnostics<T>>,
+
+    /// Number of robustness iterations actually performed
+    pub iterations_used: Option<usize>,
+
+    /// Smoothing fraction used (optimal if selected via CV)
+    pub fraction_used: T,
+
+    /// RMSE scores for each fraction tested during CV
+    pub cv_scores: Option<Vec<T>>,
+}
+```
+
+> [!TIP]
+> **Using with ndarray:** While the result struct uses `Vec<T>` for maximum compatibility, you can effortlessly convert any field to an `Array1` using `Array1::from_vec(result.y)`.
 
 ## Streaming Processing
 
@@ -313,8 +349,14 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## License
 
-Dual-licensed under **AGPL-3.0** (Open Source) or **Commercial License**.
-Contact `<thisisamirv@gmail.com>` for commercial inquiries.
+Licensed under either of
+
+- Apache License, Version 2.0
+   ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license
+   ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
 
 ## References
 

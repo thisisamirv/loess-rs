@@ -288,6 +288,42 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
         self
     }
 
+    /// Set the polynomial degree.
+    pub fn polynomial_degree(mut self, degree: PolynomialDegree) -> Self {
+        self.polynomial_degree = degree;
+        self
+    }
+
+    /// Set the number of dimensions explicitly.
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        self.dimensions = dims;
+        self
+    }
+
+    /// Set the distance metric.
+    pub fn distance_metric(mut self, metric: DistanceMetric<T>) -> Self {
+        self.distance_metric = metric;
+        self
+    }
+
+    /// Set the evaluation mode (Interpolation or Direct).
+    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
+        self.surface_mode = mode;
+        self
+    }
+
+    /// Set the interpolation cell size (default: 0.2).
+    pub fn cell(mut self, cell: f64) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+
+    /// Set the maximum number of vertices for interpolation.
+    pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
+        self.interpolation_vertices = Some(vertices);
+        self
+    }
+
     /// Enable auto-convergence for robustness iterations.
     pub fn auto_converge(mut self, tolerance: T) -> Self {
         self.auto_convergence = Some(tolerance);
@@ -310,6 +346,12 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
     // Streaming-Specific Setters
     // ========================================================================
 
+    /// Set whether to return diagnostics.
+    pub fn return_diagnostics(mut self, return_diagnostics: bool) -> Self {
+        self.return_diagnostics = return_diagnostics;
+        self
+    }
+
     /// Set chunk size for processing.
     pub fn chunk_size(mut self, size: usize) -> Self {
         self.chunk_size = size;
@@ -325,30 +367,6 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
     /// Set the merge strategy for overlapping chunks.
     pub fn merge_strategy(mut self, strategy: MergeStrategy) -> Self {
         self.merge_strategy = strategy;
-        self
-    }
-
-    /// Set whether to return diagnostics.
-    pub fn return_diagnostics(mut self, return_diagnostics: bool) -> Self {
-        self.return_diagnostics = return_diagnostics;
-        self
-    }
-
-    /// Set the interpolation cell size (default: 0.2).
-    pub fn cell(mut self, cell: f64) -> Self {
-        self.cell = Some(cell);
-        self
-    }
-
-    /// Set the maximum number of vertices for interpolation.
-    pub fn interpolation_vertices(mut self, vertices: usize) -> Self {
-        self.interpolation_vertices = Some(vertices);
-        self
-    }
-
-    /// Set the evaluation mode (Interpolation or Direct).
-    pub fn surface_mode(mut self, mode: SurfaceMode) -> Self {
-        self.surface_mode = mode;
         self
     }
 
@@ -377,6 +395,13 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
         self
     }
 
+    /// Set the execution backend hint.
+    #[doc(hidden)]
+    pub fn backend(mut self, backend: Backend) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
     /// Set a custom KD-tree builder function.
     #[doc(hidden)]
     pub fn custom_kdtree_builder(mut self, kdtree_builder_fn: Option<KDTreeBuilderFn<T>>) -> Self {
@@ -388,13 +413,6 @@ impl<T: FloatLinalg + DistanceLinalg + Debug + Send + Sync + SolverLinalg>
     #[doc(hidden)]
     pub fn parallel(mut self, parallel: bool) -> Self {
         self.parallel = Some(parallel);
-        self
-    }
-
-    /// Set the execution backend hint.
-    #[doc(hidden)]
-    pub fn backend(mut self, backend: Backend) -> Self {
-        self.backend = Some(backend);
         self
     }
 
