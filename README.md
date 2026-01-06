@@ -7,6 +7,9 @@
 
 A high-performance implementation of LOESS (Locally Estimated Scatterplot Smoothing) in Rust. This crate provides a robust, production-ready implementation with support for confidence intervals, multiple kernel functions, and optimized execution modes.
 
+> [!IMPORTANT]
+> For parallelization or `ndarray` support, use [`fastLoess`](https://github.com/av746/fastLoess).
+
 ## How LOESS works
 
 LOESS creates smooth curves through scattered data using local weighted neighborhoods:
