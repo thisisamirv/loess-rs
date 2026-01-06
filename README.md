@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/loess-rs.svg)](https://crates.io/crates/loess-rs)
 [![Documentation](https://docs.rs/loess-rs/badge.svg)](https://docs.rs/loess-rs)
-[![License](https://img.shields.io/badge/License-AGPL--3.0%20OR%20Commercial-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
 A high-performance implementation of LOESS (Locally Estimated Scatterplot Smoothing) in Rust. This crate provides a robust, production-ready implementation with support for confidence intervals, multiple kernel functions, and optimized execution modes.
